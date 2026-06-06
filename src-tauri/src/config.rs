@@ -25,6 +25,8 @@ pub struct Config {
     /// Opt-in: register a statusline command in ~/.claude/settings.json.
     /// Default OFF — we never touch the user's settings unless they enable this.
     pub statusline_optin: bool,
+    /// Show the flame effect on the tray rings when usage rises.
+    pub effects: bool,
 }
 
 impl Default for Config {
@@ -38,6 +40,7 @@ impl Default for Config {
             opacity: 0.96,
             autostart: false,
             statusline_optin: false,
+            effects: true,
         }
     }
 }

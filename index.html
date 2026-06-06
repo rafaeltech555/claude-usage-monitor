@@ -49,6 +49,7 @@
         <span id="d-today" class="today">今日 — tok</span>
         <span id="d-cost" class="cost">~$0.00</span>
       </div>
+      <div id="d-renew" class="renewline">訂閱續訂 —</div>
       <div id="d-error" class="errline" hidden></div>
     </div>
 
@@ -95,6 +96,10 @@
 
       <label class="srow check">
         <input id="s-autostart" type="checkbox" /> 開機自動啟動
+      </label>
+
+      <label class="srow check">
+        <input id="s-effects" type="checkbox" /> 用量增加時顯示火焰特效
       </label>
 
       <label class="srow check" title="啟用後會在 ~/.claude/settings.json 註冊 statusLine（先備份、不覆蓋既有設定），讓有 session 在跑時即時更新且免打 API">

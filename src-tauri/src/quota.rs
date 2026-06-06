@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const FALLBACK_VERSION: &str = "2.1.167";
 
@@ -71,6 +72,43 @@ impl QuotaProvider for OAuthProvider {
             .await
             .map_err(|e| format!("parse failed: {e}"))
     }
+}
+
+/// Subscription info derived from the OAuth profile endpoint.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct Subscription {
+    /// Day-of-month the subscription was created (used as the renewal day).
+    pub renewal_day: u32,
+    pub active: bool,
+}
+
+/// Fetch the account profile once to learn the billing day (the renewal date is
+/// computed locally from it). Best-effort; returns None on any failure.
+pub async fn fetch_subscription() -> Option<Subscription> {
+    let token = read_token().ok()?;
+    let ua = format!("claude-code/{}", claude_version());
+    let client = reqwest::Client::builder().build().ok()?;
+    let resp = client
+        .get(PROFILE_URL)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", OAUTH_BETA)
+        .header("User-Agent", ua)
+        .header("Content-Type", "application/json")
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let org = &v["organization"];
+    let created = org["subscription_created_at"].as_str()?;
+    let dt = chrono::DateTime::parse_from_rfc3339(created).ok()?;
+    let active = org["subscription_status"].as_str() == Some("active");
+    Some(Subscription {
+        renewal_day: chrono::Datelike::day(&dt),
+        active,
+    })
 }
 
 /// Read the OAuth access token, preferring the env override, then the

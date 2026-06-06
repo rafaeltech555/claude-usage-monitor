@@ -7,14 +7,16 @@ mod usage;
 use config::Config;
 use quota::{OAuthProvider, QuotaProvider, QuotaUsage};
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent};
 
 const COMPACT: (f64, f64) = (190.0, 56.0);
-const DETAILED: (f64, f64) = (270.0, 190.0);
-const SETTINGS: (f64, f64) = (300.0, 410.0);
+const DETAILED: (f64, f64) = (270.0, 214.0);
+const SETTINGS: (f64, f64) = (300.0, 450.0);
 const MARGIN: f64 = 12.0;
 const BOTTOM_PANEL_ALLOWANCE: f64 = 44.0; // leave room for a bottom taskbar
 
@@ -26,11 +28,14 @@ struct UsageSnapshot {
     status_level: String, // "ok" | "warn" | "crit"
     error: Option<String>,
     fetched_at: String,
+    renews_at: Option<String>, // next subscription renewal date (YYYY-MM-DD)
 }
 
 struct AppState {
     config: Mutex<Config>,
     latest: Mutex<UsageSnapshot>,
+    sub: Mutex<Option<quota::Subscription>>,
+    anim_gen: AtomicU64,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -54,6 +59,8 @@ pub fn run() {
         .manage(AppState {
             config: Mutex::new(config),
             latest: Mutex::new(UsageSnapshot::default()),
+            sub: Mutex::new(None),
+            anim_gen: AtomicU64::new(0),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -215,16 +222,35 @@ fn spawn_poller(app: AppHandle) {
 }
 
 async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
-    let (warn, crit, optin) = {
+    let (warn, crit, optin, effects) = {
         let state = app.state::<AppState>();
         let c = state.config.lock().unwrap();
-        (c.warn_threshold, c.crit_threshold, c.statusline_optin)
+        (c.warn_threshold, c.crit_threshold, c.statusline_optin, c.effects)
     };
 
     let today = tauri::async_runtime::spawn_blocking(usage::today_usage)
         .await
         .unwrap_or_default();
     let fetched_at = chrono::Local::now().format("%H:%M:%S").to_string();
+
+    // Subscription renewal date: fetch the profile once, then compute locally.
+    let renews_at = {
+        let need = app.state::<AppState>().sub.lock().unwrap().is_none();
+        if need {
+            if let Some(s) = quota::fetch_subscription().await {
+                *app.state::<AppState>().sub.lock().unwrap() = Some(s);
+            }
+        }
+        let state = app.state::<AppState>();
+        let guard = state.sub.lock().unwrap();
+        guard
+            .as_ref()
+            .filter(|s| s.active && s.renewal_day > 0)
+            .map(|s| next_renewal(s.renewal_day))
+    };
+
+    // Previous values for increase detection.
+    let prev = app.state::<AppState>().latest.lock().unwrap().quota.clone();
 
     // When the statusline source is opted in and fresh (a Claude Code session
     // recently rendered), use it and skip the network call; else hit OAuth.
@@ -236,19 +262,84 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
     let snap = match quota_result {
         Ok(quota) => {
             let level = level_for(max_util(&quota), warn, crit);
-            UsageSnapshot { quota, today, status_level: level, error: None, fetched_at }
+            UsageSnapshot { quota, today, status_level: level, error: None, fetched_at, renews_at }
         }
         Err(e) => {
             // Keep the last known quota so the UI doesn't flash empty on a blip.
-            let prev = app.state::<AppState>().latest.lock().unwrap().quota.clone();
             let level = level_for(max_util(&prev), warn, crit);
-            UsageSnapshot { quota: prev, today, status_level: level, error: Some(e), fetched_at }
+            UsageSnapshot { quota: prev.clone(), today, status_level: level, error: Some(e), fetched_at, renews_at }
         }
     };
+
+    // Detect a rise in either window since the last poll.
+    let util = |w: &Option<quota::QuotaWindow>| w.as_ref().map(|x| x.utilization);
+    let rose = |old: Option<f64>, new: Option<f64>| matches!((old, new), (Some(o), Some(n)) if n > o + 0.5);
+    let flame_left = rose(util(&prev.five_hour), util(&snap.quota.five_hour));
+    let flame_right = rose(util(&prev.seven_day), util(&snap.quota.seven_day));
 
     *app.state::<AppState>().latest.lock().unwrap() = snap.clone();
     let _ = app.emit("usage-update", &snap);
     update_tray(app, &snap, warn, crit);
+
+    if effects && (flame_left || flame_right) {
+        spawn_flame(app.clone(), &snap.quota, warn, crit, flame_left, flame_right);
+    }
+}
+
+/// Next subscription renewal date (YYYY-MM-DD) from the billing day-of-month.
+fn next_renewal(day: u32) -> String {
+    use chrono::{Datelike, Local, NaiveDate};
+    let today = Local::now().date_naive();
+    let (mut y, mut m) = (today.year(), today.month());
+    for _ in 0..14 {
+        let dim = days_in_month(y, m);
+        let d = day.min(dim);
+        if let Some(cand) = NaiveDate::from_ymd_opt(y, m, d) {
+            if cand >= today {
+                return cand.format("%Y-%m-%d").to_string();
+            }
+        }
+        if m == 12 {
+            m = 1;
+            y += 1;
+        } else {
+            m += 1;
+        }
+    }
+    today.format("%Y-%m-%d").to_string()
+}
+
+fn days_in_month(y: i32, m: u32) -> u32 {
+    use chrono::NaiveDate;
+    let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+    let first_next = NaiveDate::from_ymd_opt(ny, nm, 1).unwrap();
+    let first_this = NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+    (first_next - first_this).num_days() as u32
+}
+
+/// Briefly animate flames over the ring(s) whose usage just rose.
+fn spawn_flame(app: AppHandle, quota: &QuotaUsage, warn: f64, crit: f64, left: bool, right: bool) {
+    let five = quota.five_hour.as_ref().map(|w| w.utilization);
+    let seven = quota.seven_day.as_ref().map(|w| w.utilization);
+    let gen = app.state::<AppState>().anim_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn(async move {
+        for frame in 0..26u32 {
+            if app.state::<AppState>().anim_gen.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_icon(Some(icon::gauge_dual_flame(
+                    five, seven, warn, crit, left, right, frame,
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(85)).await;
+        }
+        if app.state::<AppState>().anim_gen.load(Ordering::SeqCst) == gen {
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_icon(Some(icon::gauge_dual(five, seven, warn, crit)));
+            }
+        }
+    });
 }
 
 fn max_util(q: &QuotaUsage) -> f64 {

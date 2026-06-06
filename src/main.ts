@@ -22,6 +22,7 @@ type Snapshot = {
   status_level: "ok" | "warn" | "crit";
   error: string | null;
   fetched_at: string;
+  renews_at: string | null;
 };
 type Config = {
   mode: string;
@@ -32,6 +33,7 @@ type Config = {
   opacity: number;
   autostart: boolean;
   statusline_optin: boolean;
+  effects: boolean;
 };
 
 let latest: Snapshot | null = null;
@@ -85,6 +87,7 @@ function populateSettings() {
   (document.getElementById("s-crit") as HTMLInputElement).value = String(cfg.crit_threshold);
   (document.getElementById("s-opacity") as HTMLInputElement).value = String(cfg.opacity);
   (document.getElementById("s-autostart") as HTMLInputElement).checked = cfg.autostart;
+  (document.getElementById("s-effects") as HTMLInputElement).checked = cfg.effects;
   (document.getElementById("s-statusline") as HTMLInputElement).checked = cfg.statusline_optin;
   $("s-statusline-msg").hidden = true;
 }
@@ -135,6 +138,10 @@ function wireSettings() {
     cfg.autostart = enabled;
     invoke("set_autostart", { enabled });
   });
+  on("s-effects", "change", (el) => {
+    cfg.effects = (el as HTMLInputElement).checked;
+    saveCfg();
+  });
   on("s-statusline", "change", async (el) => {
     const box = el as HTMLInputElement;
     const enabled = box.checked;
@@ -182,6 +189,18 @@ function render(s: Snapshot) {
     `快取寫 ${fmtTokens(s.today.cache_write)} · 快取讀 ${fmtTokens(s.today.cache_read)}\n` +
     `總計 ${fmtTokens(s.today.total)} tok`;
   $("d-cost").textContent = `~$${s.today.cost_usd.toFixed(2)}`;
+
+  // subscription renewal countdown
+  const renewEl = $("d-renew");
+  if (s.renews_at) {
+    const d = new Date(s.renews_at + "T00:00:00");
+    const days = Math.max(0, Math.ceil((d.getTime() - Date.now()) / 86400000));
+    const md = `${d.getMonth() + 1}/${d.getDate()}`;
+    renewEl.innerHTML = `訂閱續訂 <b>${md}</b> · ${days}天後`;
+    renewEl.hidden = false;
+  } else {
+    renewEl.hidden = true;
+  }
 
   const err = $("d-error");
   if (s.error) {

@@ -1,6 +1,7 @@
 //! Dynamically rendered tray icon: two ring gauges side by side —
 //! left = 5-hour window (current, coral), right = weekly (blue) — each filled
-//! by its utilization with the number in the center. Redrawn every poll.
+//! by its utilization with the number in the center. When usage rises, an
+//! optional flame effect is overlaid on the affected ring (animated by frame).
 
 use tauri::image::Image;
 
@@ -23,6 +24,14 @@ const BLUE: (u8, u8, u8) = (91, 155, 213); // weekly
 const TRACK: (u8, u8, u8) = (70, 70, 88);
 const DISC: (u8, u8, u8) = (28, 28, 40);
 
+const W: i32 = 76;
+const H: i32 = 38;
+const R_OUT: f32 = 17.0;
+const R_IN: f32 = 11.5;
+const CY: f32 = 19.0;
+const LEFT_CX: f32 = 18.0;
+const RIGHT_CX: f32 = 58.0;
+
 fn escalate(util: f64, base: (u8, u8, u8), warn: f64, crit: f64) -> (u8, u8, u8) {
     if util >= crit {
         (230, 75, 58)
@@ -33,71 +42,77 @@ fn escalate(util: f64, base: (u8, u8, u8), warn: f64, crit: f64) -> (u8, u8, u8)
     }
 }
 
+fn lerp(a: (u8, u8, u8), b: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
+    let t = t.clamp(0.0, 1.0);
+    (
+        (a.0 as f32 + (b.0 as f32 - a.0 as f32) * t) as u8,
+        (a.1 as f32 + (b.1 as f32 - a.1 as f32) * t) as u8,
+        (a.2 as f32 + (b.2 as f32 - a.2 as f32) * t) as u8,
+    )
+}
+
+fn flame_color(t: f32) -> (u8, u8, u8) {
+    if t < 0.4 {
+        lerp((255, 245, 200), (255, 175, 60), t / 0.4)
+    } else if t < 0.75 {
+        lerp((255, 175, 60), (240, 90, 30), (t - 0.4) / 0.35)
+    } else {
+        lerp((240, 90, 30), (200, 40, 25), (t - 0.75) / 0.25)
+    }
+}
+
 struct Canvas {
-    w: i32,
-    h: i32,
     buf: Vec<u8>,
 }
 
 impl Canvas {
-    fn new(w: i32, h: i32) -> Self {
+    fn new() -> Self {
         Canvas {
-            w,
-            h,
-            buf: vec![0u8; (w * h * 4) as usize],
+            buf: vec![0u8; (W * H * 4) as usize],
         }
     }
 
-    fn put(&mut self, x: i32, y: i32, c: (u8, u8, u8), a: u8) {
-        if x < 0 || y < 0 || x >= self.w || y >= self.h {
+    fn blend(&mut self, x: i32, y: i32, c: (u8, u8, u8), a: u8) {
+        if x < 0 || y < 0 || x >= W || y >= H {
             return;
         }
-        let i = ((y * self.w + x) * 4) as usize;
-        self.buf[i] = c.0;
-        self.buf[i + 1] = c.1;
-        self.buf[i + 2] = c.2;
-        self.buf[i + 3] = a;
+        let i = ((y * W + x) * 4) as usize;
+        let af = a as f32 / 255.0;
+        for (k, ch) in [c.0, c.1, c.2].iter().enumerate() {
+            self.buf[i + k] = (*ch as f32 * af + self.buf[i + k] as f32 * (1.0 - af)) as u8;
+        }
+        self.buf[i + 3] = self.buf[i + 3].max(a);
     }
 
-    /// Draw a ring gauge centered at (cx, cy): dark disc, track, and a fill arc
-    /// from the top going clockwise proportional to `util` (0..=100).
-    fn ring(&mut self, cx: f32, cy: f32, r_out: f32, r_in: f32, util: f64, fill: (u8, u8, u8)) {
+    fn ring(&mut self, cx: f32, util: f64, fill: (u8, u8, u8)) {
         let fill_deg = (util.clamp(0.0, 100.0) / 100.0 * 360.0) as f32;
-        let x0 = (cx - r_out).floor() as i32;
-        let x1 = (cx + r_out).ceil() as i32;
-        let y0 = (cy - r_out).floor() as i32;
-        let y1 = (cy + r_out).ceil() as i32;
-        for y in y0..=y1 {
-            for x in x0..=x1 {
+        for y in (CY - R_OUT) as i32..=(CY + R_OUT) as i32 {
+            for x in (cx - R_OUT) as i32..=(cx + R_OUT) as i32 {
                 let dx = x as f32 - cx;
-                let dy = y as f32 - cy;
+                let dy = y as f32 - CY;
                 let dist = (dx * dx + dy * dy).sqrt();
-                if dist <= r_in {
-                    self.put(x, y, DISC, 235);
-                } else if dist <= r_out {
+                if dist <= R_IN {
+                    self.blend(x, y, DISC, 235);
+                } else if dist <= R_OUT {
                     let mut deg = dx.atan2(-dy).to_degrees();
                     if deg < 0.0 {
                         deg += 360.0;
                     }
-                    if deg <= fill_deg {
-                        self.put(x, y, fill, 255);
-                    } else {
-                        self.put(x, y, TRACK, 255);
-                    }
+                    let col = if deg <= fill_deg { fill } else { TRACK };
+                    self.blend(x, y, col, 255);
                 }
             }
         }
     }
 
-    /// Draw a number centered at (cx, cy).
-    fn number(&mut self, cx: i32, cy: i32, n: i32, scale: i32, color: (u8, u8, u8)) {
+    fn number(&mut self, cx: i32, n: i32) {
         let label = n.to_string();
+        let scale = if n >= 100 { 1 } else { 2 };
         let glyph_w = 5 * scale;
         let spacing = scale;
         let text_w = label.len() as i32 * glyph_w + (label.len() as i32 - 1) * spacing;
-        let text_h = 7 * scale;
         let mut ox = cx - text_w / 2;
-        let oy = cy - text_h / 2;
+        let oy = CY as i32 - (7 * scale) / 2;
         for ch in label.chars() {
             if let Some(d) = ch.to_digit(10) {
                 let pattern = &DIGITS[d as usize];
@@ -106,7 +121,7 @@ impl Canvas {
                         if bits & (1 << (4 - col)) != 0 {
                             for sy in 0..scale {
                                 for sx in 0..scale {
-                                    self.put(ox + col * scale + sx, oy + row as i32 * scale + sy, color, 255);
+                                    self.blend(ox + col * scale + sx, oy + row as i32 * scale + sy, (245, 245, 250), 255);
                                 }
                             }
                         }
@@ -117,34 +132,81 @@ impl Canvas {
         }
     }
 
+    /// Overlay animated flame tongues rising over the top of a ring.
+    fn flames(&mut self, cx: f32, frame: u32) {
+        let f = frame as f32;
+        for fx in -15..=15 {
+            let x = cx as i32 + fx;
+            let edge = 1.0 - (fx.abs() as f32 / 16.0);
+            let flick = 0.55 + 0.45 * ((fx as f32) * 1.1 + f * 0.8).sin();
+            let wob = 0.85 + 0.15 * ((fx as f32) * 0.5 - f * 0.6).sin();
+            let h = (R_OUT + 3.0) * edge * flick * wob;
+            if h <= 0.0 {
+                continue;
+            }
+            let base_y = (CY - 6.0) as i32; // start above the number, over the top arc
+            let steps = h as i32;
+            for fy in 0..=steps {
+                let y = base_y - fy; // rise upward
+                let t = fy as f32 / h.max(1.0); // 0 at base, 1 at tip
+                let col = flame_color(t);
+                let a = (240.0 * (1.0 - t * 0.8)) as u8;
+                self.blend(x, y, col, a);
+            }
+        }
+    }
+
     fn into_image(self) -> Image<'static> {
-        Image::new_owned(self.buf, self.w as u32, self.h as u32)
+        Image::new_owned(self.buf, W as u32, H as u32)
     }
 }
 
-/// Two side-by-side ring gauges: left = 5h (current), right = weekly.
-pub fn gauge_dual(five: Option<f64>, seven: Option<f64>, warn: f64, crit: f64) -> Image<'static> {
-    const W: i32 = 76;
-    const H: i32 = 38;
-    let r_out = 17.0;
-    let r_in = 11.5;
-    let mut c = Canvas::new(W, H);
+fn render(
+    five: Option<f64>,
+    seven: Option<f64>,
+    warn: f64,
+    crit: f64,
+    flame_left: bool,
+    flame_right: bool,
+    frame: u32,
+) -> Image<'static> {
+    let mut c = Canvas::new();
 
-    // left ring — 5-hour window
     let fv = five.unwrap_or(0.0);
-    c.ring(18.0, 19.0, r_out, r_in, fv, escalate(fv, CORAL, warn, crit));
+    c.ring(LEFT_CX, fv, escalate(fv, CORAL, warn, crit));
     if five.is_some() {
-        let scale = if fv.round() >= 100.0 { 1 } else { 2 };
-        c.number(18, 19, fv.round() as i32, scale, (245, 245, 250));
+        c.number(LEFT_CX as i32, fv.round() as i32);
+    }
+    if flame_left {
+        c.flames(LEFT_CX, frame);
     }
 
-    // right ring — weekly
     let sv = seven.unwrap_or(0.0);
-    c.ring(58.0, 19.0, r_out, r_in, sv, escalate(sv, BLUE, warn, crit));
+    c.ring(RIGHT_CX, sv, escalate(sv, BLUE, warn, crit));
     if seven.is_some() {
-        let scale = if sv.round() >= 100.0 { 1 } else { 2 };
-        c.number(58, 19, sv.round() as i32, scale, (245, 245, 250));
+        c.number(RIGHT_CX as i32, sv.round() as i32);
+    }
+    if flame_right {
+        c.flames(RIGHT_CX, frame);
     }
 
     c.into_image()
+}
+
+/// Static dual gauge (no flames).
+pub fn gauge_dual(five: Option<f64>, seven: Option<f64>, warn: f64, crit: f64) -> Image<'static> {
+    render(five, seven, warn, crit, false, false, 0)
+}
+
+/// Dual gauge with flame overlay on the chosen ring(s) for the given frame.
+pub fn gauge_dual_flame(
+    five: Option<f64>,
+    seven: Option<f64>,
+    warn: f64,
+    crit: f64,
+    flame_left: bool,
+    flame_right: bool,
+    frame: u32,
+) -> Image<'static> {
+    render(five, seven, warn, crit, flame_left, flame_right, frame)
 }
