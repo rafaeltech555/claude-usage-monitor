@@ -11,10 +11,13 @@
   <body class="mode-compact level-ok">
     <!-- COMPACT: a draggable pill -->
     <div id="compact" class="widget pill" data-tauri-drag-region title="點一下展開詳細">
-      <span class="bolt">⚡</span>
-      <span id="c-five" class="pct">—</span>
-      <span class="sep">·</span>
-      <span id="c-reset" class="reset">⏱ —</span>
+      <span class="live">
+        <span class="bolt">⚡</span>
+        <span id="c-five" class="pct">—</span>
+        <span class="sep">·</span>
+        <span id="c-reset" class="reset">⏱ —</span>
+      </span>
+      <span class="frozen">❄ 請重新登入</span>
     </div>
 
     <!-- DETAILED: full card -->
@@ -27,30 +30,38 @@
         </span>
       </div>
 
-      <div class="meter">
-        <div class="meter-row">
-          <span class="label">5 小時視窗</span>
-          <span id="d-five-pct" class="val">—</span>
+      <div class="card-live">
+        <div class="meter">
+          <div class="meter-row">
+            <span class="label">5 小時視窗</span>
+            <span id="d-five-pct" class="val">—</span>
+          </div>
+          <div class="bar"><i id="d-five-bar" class="bar-fill"></i></div>
+          <div id="d-five-reset" class="reset small">重置 —</div>
         </div>
-        <div class="bar"><i id="d-five-bar" class="bar-fill"></i></div>
-        <div id="d-five-reset" class="reset small">重置 —</div>
+
+        <div class="meter">
+          <div class="meter-row">
+            <span class="label">每週額度</span>
+            <span id="d-seven-pct" class="val">—</span>
+          </div>
+          <div class="bar"><i id="d-seven-bar" class="bar-fill week"></i></div>
+          <div id="d-seven-reset" class="reset small">重置 —</div>
+        </div>
+
+        <div class="foot">
+          <span id="d-today" class="today">今日 — tok</span>
+          <span id="d-cost" class="cost">~$0.00</span>
+        </div>
+        <div id="d-renew" class="renewline">訂閱續訂 —</div>
+        <div id="d-error" class="errline" hidden></div>
       </div>
 
-      <div class="meter">
-        <div class="meter-row">
-          <span class="label">每週額度</span>
-          <span id="d-seven-pct" class="val">—</span>
-        </div>
-        <div class="bar"><i id="d-seven-bar" class="bar-fill week"></i></div>
-        <div id="d-seven-reset" class="reset small">重置 —</div>
+      <div class="card-frozen">
+        <div class="frozen-icon">❄</div>
+        <div class="frozen-title">Token 已過期</div>
+        <div class="frozen-sub">請開啟 Claude Code 重新登入<br>以恢復用量監控</div>
       </div>
-
-      <div class="foot">
-        <span id="d-today" class="today">今日 — tok</span>
-        <span id="d-cost" class="cost">~$0.00</span>
-      </div>
-      <div id="d-renew" class="renewline">訂閱續訂 —</div>
-      <div id="d-error" class="errline" hidden></div>
     </div>
 
     <!-- SETTINGS panel -->
@@ -104,6 +115,10 @@
 
       <label class="srow check">
         <input id="s-effects" type="checkbox" /> 用量增加時顯示火焰特效
+      </label>
+
+      <label class="srow check">
+        <input id="s-alerts" type="checkbox" /> 達到門檻時警示特效
       </label>
 
       <label class="srow check" title="啟用後會在 ~/.claude/settings.json 註冊 statusLine（先備份、不覆蓋既有設定），讓有 session 在跑時即時更新且免打 API">

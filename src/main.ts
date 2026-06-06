@@ -34,6 +34,7 @@ type Config = {
   autostart: boolean;
   statusline_optin: boolean;
   effects: boolean;
+  alert_effects: boolean;
   renewal_day: number;
 };
 
@@ -69,6 +70,7 @@ function populateSettings() {
   (document.getElementById("s-opacity") as HTMLInputElement).value = String(cfg.opacity);
   (document.getElementById("s-autostart") as HTMLInputElement).checked = cfg.autostart;
   (document.getElementById("s-effects") as HTMLInputElement).checked = cfg.effects;
+  (document.getElementById("s-alerts") as HTMLInputElement).checked = cfg.alert_effects;
   (document.getElementById("s-statusline") as HTMLInputElement).checked = cfg.statusline_optin;
   $("s-statusline-msg").hidden = true;
 }
@@ -128,6 +130,11 @@ function wireSettings() {
     cfg.effects = (el as HTMLInputElement).checked;
     saveCfg();
   });
+  on("s-alerts", "change", (el) => {
+    cfg.alert_effects = (el as HTMLInputElement).checked;
+    saveCfg();
+    if (latest) render(latest);
+  });
   on("s-statusline", "change", async (el) => {
     const box = el as HTMLInputElement;
     const enabled = box.checked;
@@ -145,14 +152,47 @@ function wireSettings() {
   });
 }
 
+type Level = "ok" | "warn" | "crit";
+
+function levelOf(u: number | null | undefined): Level {
+  if (u == null) return "ok";
+  if (u >= cfg.crit_threshold) return "crit";
+  if (u >= cfg.warn_threshold) return "warn";
+  return "ok";
+}
+
+function setLvl(el: HTMLElement, lvl: Level) {
+  el.classList.remove("warn", "crit");
+  if (lvl !== "ok") el.classList.add(lvl);
+}
+
+function worse(a: Level, b: Level): Level {
+  const rank = { ok: 0, warn: 1, crit: 2 } as const;
+  return rank[a] >= rank[b] ? a : b;
+}
+
 function render(s: Snapshot) {
-  document.body.classList.remove("level-ok", "level-warn", "level-crit");
-  document.body.classList.add("level-" + s.status_level);
   const stale = !!s.error && /401|unauthorized/i.test(s.error);
   document.body.classList.toggle("stale", stale);
 
   const five = s.quota.five_hour;
   const seven = s.quota.seven_day;
+
+  // Independent per-window threshold colors (current vs weekly).
+  const fiveLvl = levelOf(five?.utilization);
+  const sevenLvl = levelOf(seven?.utilization);
+  setLvl($("compact"), fiveLvl); // pill shows the 5h window
+  setLvl($("d-five-bar"), fiveLvl);
+  setLvl($("d-five-pct"), fiveLvl);
+  setLvl($("d-seven-bar"), sevenLvl);
+  setLvl($("d-seven-pct"), sevenLvl);
+
+  // Prominent alert pulse on the worst window — gated by the toggle, off when stale.
+  document.body.classList.remove("alert-warn", "alert-crit");
+  const maxLvl = worse(fiveLvl, sevenLvl);
+  if (!stale && cfg.alert_effects && maxLvl !== "ok") {
+    document.body.classList.add("alert-" + maxLvl);
+  }
 
   // compact
   $("c-five").textContent = five ? `${five.utilization.toFixed(0)}%` : "—";

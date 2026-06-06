@@ -3,14 +3,14 @@
   --fg: #ececf2;
   --muted: #9a9aae;
   --track: #3a3a4d;
-  --accent: #e07b39; /* ok */
+  --accent: #e07b39; /* 5h ok (coral) */
+  --week: #5b9bd5;   /* weekly ok (blue) */
+  --warn: #e6b13a;   /* amber */
+  --crit: #e64b3a;   /* red */
+  --ice: #8fc4e8;    /* frozen */
   font-family: Inter, "Noto Sans TC", system-ui, Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-
-/* level-driven accent */
-body.level-warn { --accent: #e6b13a; }
-body.level-crit { --accent: #e64b3a; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -43,10 +43,18 @@ body.mode-settings #settings { display: flex; }
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   cursor: pointer;
 }
+.pill .live { display: flex; align-items: center; gap: 7px; }
+.pill .frozen { display: none; align-items: center; gap: 6px; font-weight: 700; color: var(--ice); }
 .pill .bolt { color: var(--accent); }
 .pill .pct { font-weight: 700; color: var(--accent); font-size: 16px; }
 .pill .sep { color: var(--muted); }
 .pill .reset { color: #9bd; font-size: 12px; }
+
+/* 5h level color on the compact pill */
+#compact.warn { border-color: var(--warn); }
+#compact.warn .bolt, #compact.warn .pct { color: var(--warn); }
+#compact.crit { border-color: var(--crit); }
+#compact.crit .bolt, #compact.crit .pct { color: var(--crit); }
 
 /* ---------- DETAILED card ---------- */
 .card {
@@ -84,9 +92,30 @@ body.mode-settings #settings { display: flex; }
 .meter-row .label { color: var(--muted); }
 .meter-row .val { font-weight: 700; }
 .bar { height: 7px; background: var(--track); border-radius: 4px; overflow: hidden; }
-.bar-fill { display: block; height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }
-.bar-fill.week { background: #5b9bd5; }
+.bar-fill { display: block; height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease, background 0.3s ease; }
+.bar-fill.week { background: var(--week); }
 .reset.small { font-size: 11px; color: #9bd; }
+
+/* independent per-window threshold colors */
+#d-five-bar.warn, #d-seven-bar.warn { background: var(--warn); }
+#d-five-bar.crit, #d-seven-bar.crit { background: var(--crit); }
+#d-five-pct.warn, #d-seven-pct.warn { color: var(--warn); }
+#d-five-pct.crit, #d-seven-pct.crit { color: var(--crit); }
+
+/* live vs frozen content in the detailed card */
+.card-live { display: flex; flex-direction: column; gap: 7px; flex: 1; }
+.card-frozen {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 4px;
+}
+.card-frozen .frozen-icon { font-size: 30px; line-height: 1; }
+.card-frozen .frozen-title { font-weight: 700; font-size: 14px; color: var(--ice); }
+.card-frozen .frozen-sub { font-size: 11px; color: var(--muted); line-height: 1.4; }
 
 .foot {
   display: flex;
@@ -127,17 +156,31 @@ body.mode-settings #settings { display: flex; }
 .srow input[type="range"] { width: 110px; accent-color: var(--accent); }
 .srow input[type="checkbox"] { accent-color: var(--accent); }
 
-/* frozen / stale token cue */
+/* frozen / stale token: icy border + swap live data for the re-login message */
 body.stale .pill,
-body.stale .card {
-  border-color: #8fc4e8;
-  box-shadow: 0 0 12px 1px rgba(143, 196, 232, 0.45);
+body.stale .card { border-color: var(--ice); }
+body.stale .pill .live { display: none; }
+body.stale .pill .frozen { display: flex; }
+body.stale .card-live { display: none; }
+body.stale .card-frozen { display: flex; }
+body.stale #compact,
+body.stale #detailed { animation: frostPulse 2.4s ease-in-out infinite; }
+@keyframes frostPulse {
+  0%, 100% { box-shadow: inset 0 0 0 rgba(143, 196, 232, 0); }
+  50% { box-shadow: inset 0 0 16px rgba(143, 196, 232, 0.5); }
 }
 
-/* crit pulse */
-body.level-crit .pill,
-body.level-crit .card { animation: pulse 1.3s ease-in-out infinite; }
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45); }
-  50% { box-shadow: 0 0 14px 2px rgba(230, 75, 58, 0.7); }
+/* threshold alert pulse (toggleable). Window is sized to content so outer
+   shadows clip — use an INSET glow + brightening border to stay visible. */
+body.alert-warn:not(.stale) #compact,
+body.alert-warn:not(.stale) #detailed { animation: alertWarn 1.8s ease-in-out infinite; }
+body.alert-crit:not(.stale) #compact,
+body.alert-crit:not(.stale) #detailed { animation: alertCrit 0.85s ease-in-out infinite; }
+@keyframes alertWarn {
+  0%, 100% { border-color: var(--warn); box-shadow: inset 0 0 0 rgba(230, 177, 58, 0); }
+  50% { border-color: #ffd35e; box-shadow: inset 0 0 16px rgba(230, 177, 58, 0.5); }
+}
+@keyframes alertCrit {
+  0%, 100% { border-color: var(--crit); box-shadow: inset 0 0 2px rgba(230, 75, 58, 0.3); }
+  50% { border-color: #ff7a6a; box-shadow: inset 0 0 20px rgba(230, 75, 58, 0.8); }
 }

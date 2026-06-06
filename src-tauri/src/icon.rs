@@ -224,14 +224,15 @@ fn render(
     let fv = five.unwrap_or(0.0);
     let left_fill = if frozen { ICE_FILL } else { escalate(fv, CORAL, warn, crit) };
     c.ring(LEFT_CX, fv, left_fill);
-    if five.is_some() {
+    // Frozen = data is stale; don't render the (stale) numbers.
+    if five.is_some() && !frozen {
         c.number(LEFT_CX as i32, fv.round() as i32);
     }
 
     let sv = seven.unwrap_or(0.0);
     let right_fill = if frozen { ICE_FILL } else { escalate(sv, BLUE, warn, crit) };
     c.ring(RIGHT_CX, sv, right_fill);
-    if seven.is_some() {
+    if seven.is_some() && !frozen {
         c.number(RIGHT_CX as i32, sv.round() as i32);
     }
 

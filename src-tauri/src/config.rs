@@ -27,6 +27,8 @@ pub struct Config {
     pub statusline_optin: bool,
     /// Show the flame effect on the tray rings when usage rises.
     pub effects: bool,
+    /// Show a prominent pulsing alert on the widget when warn/crit thresholds hit.
+    pub alert_effects: bool,
     /// Monthly billing day-of-month (1..=31) for the renewal countdown.
     /// 0 = unset (the renewal line is hidden). Set from your Claude billing page.
     pub renewal_day: u32,
@@ -44,6 +46,7 @@ impl Default for Config {
             autostart: false,
             statusline_optin: false,
             effects: true,
+            alert_effects: true,
             renewal_day: 0,
         }
     }

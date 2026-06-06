@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent};
 
 const COMPACT: (f64, f64) = (190.0, 56.0);
 const DETAILED: (f64, f64) = (270.0, 214.0);
-const SETTINGS: (f64, f64) = (300.0, 450.0);
+const SETTINGS: (f64, f64) = (300.0, 480.0);
 const MARGIN: f64 = 12.0;
 const BOTTOM_PANEL_ALLOWANCE: f64 = 44.0; // leave room for a bottom taskbar
 
