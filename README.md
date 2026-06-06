@@ -10,10 +10,12 @@
 - **三種畫面**：
   - 精簡：膠囊 `⚡ % · ⏱ 重置倒數`
   - 詳細：5h / 每週進度條 + 重置 + 今日 token/花費 + 訂閱續訂日
-  - 設定：角落、預設模式、更新間隔、警示門檻、帳單日、透明度、開機自動啟動、火焰特效
-- **系統匣**：兩個並排環形儀表（左=5 小時、右=每週），各自顯示百分比；用量上升時可顯示**火焰特效**（可於設定關閉）；左鍵切換顯示/隱藏、右鍵選單。
+  - 設定：角落、預設模式、更新間隔、警示/危險門檻、帳單日、透明度、開機自動啟動、火焰特效、警示特效
+- **系統匣**：兩個並排環形儀表（左=5 小時、右=每週），各自顯示百分比與顏色；左鍵切換顯示/隱藏、右鍵選單。四種狀態：
+  - 正常、**用量上升火焰**、**達門檻脈動警示**、**token 過期結冰**
+- **門檻警示（可開關）**：5h 與每週**各自獨立**判定顏色（ok → 琥珀(warn) → 紅(crit)）；達門檻時 widget 與系統匣對應的環會以該顏色**脈動**，相當明顯。
+- **過期結冰**：OAuth token 過期（太久沒開 Claude Code）時，精簡/詳細/系統匣都會「結冰」並**停止顯示舊數據**，明確提示「請開啟 Claude Code 重新登入」。
 - **釘選任何角落**：無邊框、永遠置頂，可拖到四角並自動記住位置。
-- **額度警示**：超過門檻時整個 widget 與匣圖示變橘 / 變紅閃爍。
 - **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。
 
 ## 安裝
@@ -39,9 +41,16 @@ npm run tauri build    # 打包 .deb + AppImage
 
 **Linux 系統依賴**：`libgtk-3-dev`、`libwebkit2gtk-4.1-dev`、`libayatana-appindicator3-dev`、`librsvg2-dev`、`libxdo-dev`。
 
+## 測試
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust：config / usage 成本 / quota 解析 / statusline / icon
+npm test                                           # 前端 vitest：格式化 + 續訂日計算
+```
+
 ## 設定檔
 
-`~/.config/claude-usage-monitor/config.json`（模式、角落、更新間隔≥180s、警示門檻、透明度、開機啟動）。
+`~/.config/claude-usage-monitor/config.json`：模式、角落、更新間隔(≥180s)、警示/危險門檻、帳單日、透明度、開機啟動、火焰特效(`effects`)、警示特效(`alert_effects`)、statusline opt-in。
 
 ## 桌面環境備註
 
@@ -51,4 +60,6 @@ npm run tauri build    # 打包 .deb + AppImage
 ## 已知限制 / 待辦
 
 - `/api/oauth/usage` 為非官方端點，未來可能變動（已抽象成可抽換的 `QuotaProvider`）。
+- 訂閱續訂日需手動填帳單日：OAuth token 無法存取帳單端點（`/api/oauth/profile` 的訂閱建立日 ≠ 實際帳單日）。
+- 目前僅在 Linux 建置/驗證；跨平台（Windows/macOS）程式碼大致可移植，待補 macOS Keychain token、視窗設定與 CI（GitHub Actions）。
 - 即時活動狀態（目前 session 正在燒多少）為未來擴充。
