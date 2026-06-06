@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude Usage Monitor</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body class="mode-compact level-ok">
+    <!-- COMPACT: a draggable pill -->
+    <div id="compact" class="widget pill" data-tauri-drag-region title="點一下展開詳細">
+      <span class="bolt">⚡</span>
+      <span id="c-five" class="pct">—</span>
+      <span class="sep">·</span>
+      <span id="c-reset" class="reset">⏱ —</span>
+    </div>
+
+    <!-- DETAILED: full card -->
+    <div id="detailed" class="widget card">
+      <div class="card-head" data-tauri-drag-region>
+        <span class="title">⚡ Claude Max</span>
+        <span class="head-actions">
+          <button id="btn-collapse" class="iconbtn" title="精簡模式">⊟</button>
+          <button id="btn-hide" class="iconbtn" title="收回系統匣">✕</button>
+        </span>
+      </div>
+
+      <div class="meter">
+        <div class="meter-row">
+          <span class="label">5 小時視窗</span>
+          <span id="d-five-pct" class="val">—</span>
+        </div>
+        <div class="bar"><i id="d-five-bar" class="bar-fill"></i></div>
+        <div id="d-five-reset" class="reset small">重置 —</div>
+      </div>
+
+      <div class="meter">
+        <div class="meter-row">
+          <span class="label">每週額度</span>
+          <span id="d-seven-pct" class="val">—</span>
+        </div>
+        <div class="bar"><i id="d-seven-bar" class="bar-fill week"></i></div>
+        <div id="d-seven-reset" class="reset small">重置 —</div>
+      </div>
+
+      <div class="foot">
+        <span id="d-today" class="today">今日 — tok</span>
+        <span id="d-cost" class="cost">~$0.00</span>
+      </div>
+      <div id="d-error" class="errline" hidden></div>
+    </div>
+
+    <!-- SETTINGS panel -->
+    <div id="settings" class="widget card settings">
+      <div class="card-head" data-tauri-drag-region>
+        <span class="title">⚙ 設定</span>
+        <span class="head-actions">
+          <button id="s-done" class="iconbtn" title="完成">✓</button>
+        </span>
+      </div>
+
+      <label class="srow">釘選角落
+        <select id="s-corner">
+          <option value="tl">左上</option>
+          <option value="tr">右上</option>
+          <option value="bl">左下</option>
+          <option value="br">右下</option>
+        </select>
+      </label>
+
+      <label class="srow">預設模式
+        <select id="s-mode">
+          <option value="compact">精簡</option>
+          <option value="detailed">詳細</option>
+        </select>
+      </label>
+
+      <label class="srow">更新間隔（秒）
+        <input id="s-poll" type="number" min="180" step="30" />
+      </label>
+
+      <label class="srow">警示門檻 %
+        <input id="s-warn" type="number" min="0" max="100" />
+      </label>
+
+      <label class="srow">危險門檻 %
+        <input id="s-crit" type="number" min="0" max="100" />
+      </label>
+
+      <label class="srow">透明度
+        <input id="s-opacity" type="range" min="0.3" max="1" step="0.02" />
+      </label>
+
+      <label class="srow check">
+        <input id="s-autostart" type="checkbox" /> 開機自動啟動
+      </label>
+
+      <label class="srow check disabled" title="之後版本提供">
+        <input type="checkbox" disabled /> statusline 即時更新（即將推出）
+      </label>
+    </div>
+  </body>
+</html>
