@@ -28,13 +28,11 @@ struct UsageSnapshot {
     status_level: String, // "ok" | "warn" | "crit"
     error: Option<String>,
     fetched_at: String,
-    renews_at: Option<String>, // next subscription renewal date (YYYY-MM-DD)
 }
 
 struct AppState {
     config: Mutex<Config>,
     latest: Mutex<UsageSnapshot>,
-    sub: Mutex<Option<quota::Subscription>>,
     anim_gen: AtomicU64,
 }
 
@@ -59,7 +57,6 @@ pub fn run() {
         .manage(AppState {
             config: Mutex::new(config),
             latest: Mutex::new(UsageSnapshot::default()),
-            sub: Mutex::new(None),
             anim_gen: AtomicU64::new(0),
         })
         .invoke_handler(tauri::generate_handler![
@@ -233,22 +230,6 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
         .unwrap_or_default();
     let fetched_at = chrono::Local::now().format("%H:%M:%S").to_string();
 
-    // Subscription renewal date: fetch the profile once, then compute locally.
-    let renews_at = {
-        let need = app.state::<AppState>().sub.lock().unwrap().is_none();
-        if need {
-            if let Some(s) = quota::fetch_subscription().await {
-                *app.state::<AppState>().sub.lock().unwrap() = Some(s);
-            }
-        }
-        let state = app.state::<AppState>();
-        let guard = state.sub.lock().unwrap();
-        guard
-            .as_ref()
-            .filter(|s| s.active && s.renewal_day > 0)
-            .map(|s| next_renewal(s.renewal_day))
-    };
-
     // Previous values for increase detection.
     let prev = app.state::<AppState>().latest.lock().unwrap().quota.clone();
 
@@ -262,12 +243,12 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
     let snap = match quota_result {
         Ok(quota) => {
             let level = level_for(max_util(&quota), warn, crit);
-            UsageSnapshot { quota, today, status_level: level, error: None, fetched_at, renews_at }
+            UsageSnapshot { quota, today, status_level: level, error: None, fetched_at }
         }
         Err(e) => {
             // Keep the last known quota so the UI doesn't flash empty on a blip.
             let level = level_for(max_util(&prev), warn, crit);
-            UsageSnapshot { quota: prev.clone(), today, status_level: level, error: Some(e), fetched_at, renews_at }
+            UsageSnapshot { quota: prev.clone(), today, status_level: level, error: Some(e), fetched_at }
         }
     };
 
@@ -284,37 +265,6 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
     if effects && (flame_left || flame_right) {
         spawn_flame(app.clone(), &snap.quota, warn, crit, flame_left, flame_right);
     }
-}
-
-/// Next subscription renewal date (YYYY-MM-DD) from the billing day-of-month.
-fn next_renewal(day: u32) -> String {
-    use chrono::{Datelike, Local, NaiveDate};
-    let today = Local::now().date_naive();
-    let (mut y, mut m) = (today.year(), today.month());
-    for _ in 0..14 {
-        let dim = days_in_month(y, m);
-        let d = day.min(dim);
-        if let Some(cand) = NaiveDate::from_ymd_opt(y, m, d) {
-            if cand >= today {
-                return cand.format("%Y-%m-%d").to_string();
-            }
-        }
-        if m == 12 {
-            m = 1;
-            y += 1;
-        } else {
-            m += 1;
-        }
-    }
-    today.format("%Y-%m-%d").to_string()
-}
-
-fn days_in_month(y: i32, m: u32) -> u32 {
-    use chrono::NaiveDate;
-    let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-    let first_next = NaiveDate::from_ymd_opt(ny, nm, 1).unwrap();
-    let first_this = NaiveDate::from_ymd_opt(y, m, 1).unwrap();
-    (first_next - first_this).num_days() as u32
 }
 
 /// Briefly animate flames over the ring(s) whose usage just rose.

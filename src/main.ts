@@ -22,7 +22,6 @@ type Snapshot = {
   status_level: "ok" | "warn" | "crit";
   error: string | null;
   fetched_at: string;
-  renews_at: string | null;
 };
 type Config = {
   mode: string;
@@ -34,6 +33,7 @@ type Config = {
   autostart: boolean;
   statusline_optin: boolean;
   effects: boolean;
+  renewal_day: number;
 };
 
 let latest: Snapshot | null = null;
@@ -64,6 +64,26 @@ function $(id: string): HTMLElement {
   return document.getElementById(id)!;
 }
 
+// Next occurrence of a monthly billing day-of-month (clamped to month length).
+function nextRenewal(day: number): Date | null {
+  if (!day || day < 1 || day > 31) return null;
+  const now = new Date();
+  const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let y = now.getFullYear();
+  let m = now.getMonth();
+  for (let i = 0; i < 14; i++) {
+    const dim = new Date(y, m + 1, 0).getDate();
+    const cand = new Date(y, m, Math.min(day, dim));
+    if (cand >= today0) return cand;
+    m++;
+    if (m > 11) {
+      m = 0;
+      y++;
+    }
+  }
+  return null;
+}
+
 function setMode(mode: string) {
   document.body.classList.remove("mode-compact", "mode-detailed", "mode-settings");
   document.body.classList.add(
@@ -85,6 +105,7 @@ function populateSettings() {
   (document.getElementById("s-poll") as HTMLInputElement).value = String(cfg.poll_secs);
   (document.getElementById("s-warn") as HTMLInputElement).value = String(cfg.warn_threshold);
   (document.getElementById("s-crit") as HTMLInputElement).value = String(cfg.crit_threshold);
+  (document.getElementById("s-renewal") as HTMLInputElement).value = String(cfg.renewal_day);
   (document.getElementById("s-opacity") as HTMLInputElement).value = String(cfg.opacity);
   (document.getElementById("s-autostart") as HTMLInputElement).checked = cfg.autostart;
   (document.getElementById("s-effects") as HTMLInputElement).checked = cfg.effects;
@@ -127,6 +148,11 @@ function wireSettings() {
   on("s-crit", "change", (el) => {
     cfg.crit_threshold = parseFloat(el.value);
     saveCfg();
+  });
+  on("s-renewal", "change", (el) => {
+    cfg.renewal_day = Math.min(31, Math.max(0, parseInt(el.value || "0", 10)));
+    saveCfg();
+    if (latest) render(latest);
   });
   on("s-opacity", "input", (el) => {
     cfg.opacity = parseFloat(el.value);
@@ -190,13 +216,14 @@ function render(s: Snapshot) {
     `總計 ${fmtTokens(s.today.total)} tok`;
   $("d-cost").textContent = `~$${s.today.cost_usd.toFixed(2)}`;
 
-  // subscription renewal countdown
+  // subscription renewal countdown (computed from the user-set billing day)
   const renewEl = $("d-renew");
-  if (s.renews_at) {
-    const d = new Date(s.renews_at + "T00:00:00");
-    const days = Math.max(0, Math.ceil((d.getTime() - Date.now()) / 86400000));
-    const md = `${d.getMonth() + 1}/${d.getDate()}`;
-    renewEl.innerHTML = `訂閱續訂 <b>${md}</b> · ${days}天後`;
+  const r = nextRenewal(cfg?.renewal_day ?? 0);
+  if (r) {
+    const today0 = new Date();
+    today0.setHours(0, 0, 0, 0);
+    const days = Math.round((r.getTime() - today0.getTime()) / 86400000);
+    renewEl.innerHTML = `訂閱續訂 <b>${r.getMonth() + 1}/${r.getDate()}</b> · ${days}天後`;
     renewEl.hidden = false;
   } else {
     renewEl.hidden = true;
