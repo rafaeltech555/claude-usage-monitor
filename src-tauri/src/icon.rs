@@ -177,6 +177,24 @@ impl Canvas {
         }
     }
 
+    /// Pulse a ring's band brighter (stronger toward the outer rim) in its
+    /// level colour — the tray equivalent of the widget's alert glow.
+    fn alert_overlay(&mut self, cx: f32, color: (u8, u8, u8), amp: f32) {
+        let bright = lerp(color, (255, 255, 255), 0.5);
+        for y in (CY - R_OUT) as i32..=(CY + R_OUT) as i32 {
+            for x in (cx - R_OUT) as i32..=(cx + R_OUT) as i32 {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - CY;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist > R_IN && dist <= R_OUT {
+                    let edge = ((dist - R_IN) / (R_OUT - R_IN)).clamp(0.0, 1.0);
+                    let a = (amp * (45.0 + 165.0 * edge)).clamp(0.0, 255.0) as u8;
+                    self.blend(x, y, bright, a);
+                }
+            }
+        }
+    }
+
     /// Overlay frost: pale specks across the ring plus icicles hanging below it.
     fn frost(&mut self, cx: f32) {
         // sparse deterministic frost specks within the ring
@@ -272,6 +290,41 @@ pub fn gauge_dual_flame(
 /// Frozen dual gauge — shown when the quota data is stale (token expired).
 pub fn gauge_dual_frozen(five: Option<f64>, seven: Option<f64>) -> Image<'static> {
     render(five, seven, 0.0, 0.0, false, false, 0, true)
+}
+
+/// Dual gauge with a pulsing alert throb on any ring at/above the warn
+/// threshold, in that ring's own (amber/red) colour.
+pub fn gauge_dual_alert(
+    five: Option<f64>,
+    seven: Option<f64>,
+    warn: f64,
+    crit: f64,
+    frame: u32,
+) -> Image<'static> {
+    let mut c = Canvas::new(false);
+    let amp = 0.2 + 0.8 * (0.5 + 0.5 * ((frame as f32) * 0.45).sin());
+
+    let fv = five.unwrap_or(0.0);
+    let lc = escalate(fv, CORAL, warn, crit);
+    c.ring(LEFT_CX, fv, lc);
+    if five.is_some() {
+        c.number(LEFT_CX as i32, fv.round() as i32);
+    }
+    if fv >= warn {
+        c.alert_overlay(LEFT_CX, lc, amp);
+    }
+
+    let sv = seven.unwrap_or(0.0);
+    let rc = escalate(sv, BLUE, warn, crit);
+    c.ring(RIGHT_CX, sv, rc);
+    if seven.is_some() {
+        c.number(RIGHT_CX as i32, sv.round() as i32);
+    }
+    if sv >= warn {
+        c.alert_overlay(RIGHT_CX, rc, amp);
+    }
+
+    c.into_image()
 }
 
 #[cfg(test)]

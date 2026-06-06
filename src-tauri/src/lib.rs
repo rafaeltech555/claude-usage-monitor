@@ -219,10 +219,16 @@ fn spawn_poller(app: AppHandle) {
 }
 
 async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
-    let (warn, crit, optin, effects) = {
+    let (warn, crit, optin, effects, alert_effects) = {
         let state = app.state::<AppState>();
         let c = state.config.lock().unwrap();
-        (c.warn_threshold, c.crit_threshold, c.statusline_optin, c.effects)
+        (
+            c.warn_threshold,
+            c.crit_threshold,
+            c.statusline_optin,
+            c.effects,
+            c.alert_effects,
+        )
     };
 
     let today = tauri::async_runtime::spawn_blocking(usage::today_usage)
@@ -269,16 +275,25 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
     let _ = app.emit("usage-update", &snap);
     update_tray(app, &snap, warn, crit, stale);
 
-    if !stale && effects && (flame_left || flame_right) {
-        spawn_flame(app.clone(), &snap.quota, warn, crit, flame_left, flame_right);
+    // Bump the animation generation to cancel any running tray animation, then
+    // start the appropriate one. Priority: frozen (static) > alert > flames.
+    let five_u = snap.quota.five_hour.as_ref().map(|w| w.utilization);
+    let seven_u = snap.quota.seven_day.as_ref().map(|w| w.utilization);
+    let alert_active = !stale
+        && alert_effects
+        && (five_u.unwrap_or(0.0) >= warn || seven_u.unwrap_or(0.0) >= warn);
+    let gen = app.state::<AppState>().anim_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    if alert_active {
+        spawn_alert(app.clone(), gen, five_u, seven_u, warn, crit);
+    } else if !stale && effects && (flame_left || flame_right) {
+        spawn_flame(app.clone(), gen, &snap.quota, warn, crit, flame_left, flame_right);
     }
 }
 
 /// Briefly animate flames over the ring(s) whose usage just rose.
-fn spawn_flame(app: AppHandle, quota: &QuotaUsage, warn: f64, crit: f64, left: bool, right: bool) {
+fn spawn_flame(app: AppHandle, gen: u64, quota: &QuotaUsage, warn: f64, crit: f64, left: bool, right: bool) {
     let five = quota.five_hour.as_ref().map(|w| w.utilization);
     let seven = quota.seven_day.as_ref().map(|w| w.utilization);
-    let gen = app.state::<AppState>().anim_gen.fetch_add(1, Ordering::SeqCst) + 1;
     tauri::async_runtime::spawn(async move {
         for frame in 0..26u32 {
             if app.state::<AppState>().anim_gen.load(Ordering::SeqCst) != gen {
@@ -295,6 +310,24 @@ fn spawn_flame(app: AppHandle, quota: &QuotaUsage, warn: f64, crit: f64, left: b
             if let Some(tray) = app.tray_by_id("main") {
                 let _ = tray.set_icon(Some(icon::gauge_dual(five, seven, warn, crit)));
             }
+        }
+    });
+}
+
+/// Continuously pulse the warn/crit ring(s) in the tray until the generation
+/// changes (next poll) — the tray counterpart of the widget alert glow.
+fn spawn_alert(app: AppHandle, gen: u64, five: Option<f64>, seven: Option<f64>, warn: f64, crit: f64) {
+    tauri::async_runtime::spawn(async move {
+        let mut frame: u32 = 0;
+        loop {
+            if app.state::<AppState>().anim_gen.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_icon(Some(icon::gauge_dual_alert(five, seven, warn, crit, frame)));
+            }
+            frame = frame.wrapping_add(1);
+            tokio::time::sleep(Duration::from_millis(120)).await;
         }
     });
 }
