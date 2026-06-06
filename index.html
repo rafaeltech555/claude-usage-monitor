@@ -97,9 +97,10 @@
         <input id="s-autostart" type="checkbox" /> 開機自動啟動
       </label>
 
-      <label class="srow check disabled" title="之後版本提供">
-        <input type="checkbox" disabled /> statusline 即時更新（即將推出）
+      <label class="srow check" title="啟用後會在 ~/.claude/settings.json 註冊 statusLine（先備份、不覆蓋既有設定），讓有 session 在跑時即時更新且免打 API">
+        <input id="s-statusline" type="checkbox" /> statusline 即時更新
       </label>
+      <div id="s-statusline-msg" class="errline" hidden></div>
     </div>
   </body>
 </html>

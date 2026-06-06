@@ -13,6 +13,7 @@
 - **系統匣**：動態環形儀表圖示，中央直接顯示使用百分比；左鍵切換顯示/隱藏、右鍵選單。
 - **釘選任何角落**：無邊框、永遠置頂，可拖到四角並自動記住位置。
 - **額度警示**：超過門檻時整個 widget 與匣圖示變橘 / 變紅閃爍。
+- **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。
 
 ## 安裝
 
@@ -49,5 +50,4 @@ npm run tauri build    # 打包 .deb + AppImage
 ## 已知限制 / 待辦
 
 - `/api/oauth/usage` 為非官方端點，未來可能變動（已抽象成可抽換的 `QuotaProvider`）。
-- statusline 即時更新來源為 opt-in，目前尚未實作（預設不動你的 `~/.claude/settings.json`）。
 - 即時活動狀態（目前 session 正在燒多少）為未來擴充。

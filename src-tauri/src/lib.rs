@@ -1,6 +1,7 @@
 mod config;
 mod icon;
 mod quota;
+mod statusline;
 mod usage;
 
 use config::Config;
@@ -34,6 +35,13 @@ struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Statusline hook mode: when Claude Code invokes `<exe> --statusline`, just
+    // capture stdin and exit — do not start the GUI.
+    if std::env::args().any(|a| a == "--statusline") {
+        statusline::run_hook();
+        return;
+    }
+
     let config = Config::load();
     let want_autostart = config.autostart;
 
@@ -57,6 +65,7 @@ pub fn run() {
             refresh_now,
             get_snapshot,
             set_autostart,
+            set_statusline_optin,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Moved(_) = event {
@@ -171,6 +180,18 @@ fn set_autostart(app: AppHandle, state: State<AppState>, enabled: bool) -> Resul
 }
 
 #[tauri::command]
+fn set_statusline_optin(state: State<AppState>, enabled: bool) -> Result<(), String> {
+    if enabled {
+        statusline::enable()?;
+    } else {
+        statusline::disable()?;
+    }
+    let mut c = state.config.lock().unwrap();
+    c.statusline_optin = enabled;
+    c.save()
+}
+
+#[tauri::command]
 fn refresh_now(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let provider = OAuthProvider;
@@ -194,10 +215,10 @@ fn spawn_poller(app: AppHandle) {
 }
 
 async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
-    let (warn, crit) = {
+    let (warn, crit, optin) = {
         let state = app.state::<AppState>();
         let c = state.config.lock().unwrap();
-        (c.warn_threshold, c.crit_threshold)
+        (c.warn_threshold, c.crit_threshold, c.statusline_optin)
     };
 
     let today = tauri::async_runtime::spawn_blocking(usage::today_usage)
@@ -205,7 +226,14 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
         .unwrap_or_default();
     let fetched_at = chrono::Local::now().format("%H:%M:%S").to_string();
 
-    let snap = match provider.fetch().await {
+    // When the statusline source is opted in and fresh (a Claude Code session
+    // recently rendered), use it and skip the network call; else hit OAuth.
+    let quota_result = match optin.then(|| statusline::read_fresh(150)).flatten() {
+        Some(q) => Ok(q),
+        None => provider.fetch().await,
+    };
+
+    let snap = match quota_result {
         Ok(quota) => {
             let level = level_for(max_util(&quota), warn, crit);
             UsageSnapshot { quota, today, status_level: level, error: None, fetched_at }

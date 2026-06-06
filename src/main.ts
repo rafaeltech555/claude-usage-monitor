@@ -85,6 +85,8 @@ function populateSettings() {
   (document.getElementById("s-crit") as HTMLInputElement).value = String(cfg.crit_threshold);
   (document.getElementById("s-opacity") as HTMLInputElement).value = String(cfg.opacity);
   (document.getElementById("s-autostart") as HTMLInputElement).checked = cfg.autostart;
+  (document.getElementById("s-statusline") as HTMLInputElement).checked = cfg.statusline_optin;
+  $("s-statusline-msg").hidden = true;
 }
 
 function openSettings() {
@@ -132,6 +134,21 @@ function wireSettings() {
     const enabled = (el as HTMLInputElement).checked;
     cfg.autostart = enabled;
     invoke("set_autostart", { enabled });
+  });
+  on("s-statusline", "change", async (el) => {
+    const box = el as HTMLInputElement;
+    const enabled = box.checked;
+    const msg = $("s-statusline-msg");
+    try {
+      await invoke("set_statusline_optin", { enabled });
+      cfg.statusline_optin = enabled;
+      msg.hidden = true;
+    } catch (e) {
+      // Revert the checkbox and surface the reason (e.g. existing statusLine).
+      box.checked = !enabled;
+      msg.textContent = "⚠ " + String(e);
+      msg.hidden = false;
+    }
   });
 }
 
