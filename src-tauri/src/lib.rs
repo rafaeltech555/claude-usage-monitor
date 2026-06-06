@@ -248,7 +248,7 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
 
     *app.state::<AppState>().latest.lock().unwrap() = snap.clone();
     let _ = app.emit("usage-update", &snap);
-    update_tray(app, &snap);
+    update_tray(app, &snap, warn, crit);
 }
 
 fn max_util(q: &QuotaUsage) -> f64 {
@@ -290,7 +290,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     let builder = TrayIconBuilder::with_id("main")
-        .icon(icon::gauge(0.0, "ok"))
+        .icon(icon::gauge_dual(Some(0.0), Some(0.0), 75.0, 90.0))
         .icon_as_template(false)
         .tooltip("Claude Usage Monitor")
         .menu(&menu)
@@ -323,13 +323,18 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn update_tray(app: &AppHandle, snap: &UsageSnapshot) {
+fn update_tray(app: &AppHandle, snap: &UsageSnapshot, warn: f64, crit: f64) {
     let Some(tray) = app.tray_by_id("main") else { return };
 
-    // Redraw the gauge icon with current utilization and show the % as a label.
-    let util = max_util(&snap.quota);
-    let _ = tray.set_icon(Some(icon::gauge(util, &snap.status_level)));
-    let _ = tray.set_title(Some(format!("{:.0}%", util)));
+    // Redraw the dual gauge: left = 5h (current), right = weekly.
+    let five_u = snap.quota.five_hour.as_ref().map(|w| w.utilization);
+    let seven_u = snap.quota.seven_day.as_ref().map(|w| w.utilization);
+    let _ = tray.set_icon(Some(icon::gauge_dual(five_u, seven_u, warn, crit)));
+    let _ = tray.set_title(Some(format!(
+        "{:.0}/{:.0}%",
+        five_u.unwrap_or(0.0),
+        seven_u.unwrap_or(0.0)
+    )));
 
     let five = snap
         .quota
