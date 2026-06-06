@@ -1,7 +1,11 @@
 //! Dynamically rendered tray icon: two ring gauges side by side —
 //! left = 5-hour window (current, coral), right = weekly (blue) — each filled
-//! by its utilization with the number in the center. When usage rises, an
-//! optional flame effect is overlaid on the affected ring (animated by frame).
+//! by its utilization with the number in the center.
+//!
+//! Two optional states:
+//! - flames overlaid on a ring whose usage just rose (animated by frame);
+//! - a frozen/iced look when the quota data is stale (token expired — i.e.
+//!   Claude Code hasn't been opened in a while).
 
 use tauri::image::Image;
 
@@ -23,6 +27,12 @@ const CORAL: (u8, u8, u8) = (217, 119, 87); // 5-hour (current)
 const BLUE: (u8, u8, u8) = (91, 155, 213); // weekly
 const TRACK: (u8, u8, u8) = (70, 70, 88);
 const DISC: (u8, u8, u8) = (28, 28, 40);
+
+// Frozen palette
+const ICE_FILL: (u8, u8, u8) = (150, 190, 220);
+const ICE_TRACK: (u8, u8, u8) = (52, 66, 84);
+const ICE_DISC: (u8, u8, u8) = (34, 46, 62);
+const FROST: (u8, u8, u8) = (210, 235, 250);
 
 const W: i32 = 76;
 const H: i32 = 38;
@@ -63,13 +73,22 @@ fn flame_color(t: f32) -> (u8, u8, u8) {
 
 struct Canvas {
     buf: Vec<u8>,
+    frozen: bool,
 }
 
 impl Canvas {
-    fn new() -> Self {
+    fn new(frozen: bool) -> Self {
         Canvas {
             buf: vec![0u8; (W * H * 4) as usize],
+            frozen,
         }
+    }
+
+    fn track(&self) -> (u8, u8, u8) {
+        if self.frozen { ICE_TRACK } else { TRACK }
+    }
+    fn disc(&self) -> (u8, u8, u8) {
+        if self.frozen { ICE_DISC } else { DISC }
     }
 
     fn blend(&mut self, x: i32, y: i32, c: (u8, u8, u8), a: u8) {
@@ -86,19 +105,20 @@ impl Canvas {
 
     fn ring(&mut self, cx: f32, util: f64, fill: (u8, u8, u8)) {
         let fill_deg = (util.clamp(0.0, 100.0) / 100.0 * 360.0) as f32;
+        let (track, disc) = (self.track(), self.disc());
         for y in (CY - R_OUT) as i32..=(CY + R_OUT) as i32 {
             for x in (cx - R_OUT) as i32..=(cx + R_OUT) as i32 {
                 let dx = x as f32 - cx;
                 let dy = y as f32 - CY;
                 let dist = (dx * dx + dy * dy).sqrt();
                 if dist <= R_IN {
-                    self.blend(x, y, DISC, 235);
+                    self.blend(x, y, disc, 235);
                 } else if dist <= R_OUT {
                     let mut deg = dx.atan2(-dy).to_degrees();
                     if deg < 0.0 {
                         deg += 360.0;
                     }
-                    let col = if deg <= fill_deg { fill } else { TRACK };
+                    let col = if deg <= fill_deg { fill } else { track };
                     self.blend(x, y, col, 255);
                 }
             }
@@ -107,6 +127,7 @@ impl Canvas {
 
     fn number(&mut self, cx: i32, n: i32) {
         let label = n.to_string();
+        let color = if self.frozen { (220, 238, 250) } else { (245, 245, 250) };
         let scale = if n >= 100 { 1 } else { 2 };
         let glyph_w = 5 * scale;
         let spacing = scale;
@@ -121,7 +142,7 @@ impl Canvas {
                         if bits & (1 << (4 - col)) != 0 {
                             for sy in 0..scale {
                                 for sx in 0..scale {
-                                    self.blend(ox + col * scale + sx, oy + row as i32 * scale + sy, (245, 245, 250), 255);
+                                    self.blend(ox + col * scale + sx, oy + row as i32 * scale + sy, color, 255);
                                 }
                             }
                         }
@@ -144,14 +165,41 @@ impl Canvas {
             if h <= 0.0 {
                 continue;
             }
-            let base_y = (CY - 6.0) as i32; // start above the number, over the top arc
+            let base_y = (CY - 6.0) as i32;
             let steps = h as i32;
             for fy in 0..=steps {
-                let y = base_y - fy; // rise upward
-                let t = fy as f32 / h.max(1.0); // 0 at base, 1 at tip
+                let y = base_y - fy;
+                let t = fy as f32 / h.max(1.0);
                 let col = flame_color(t);
                 let a = (240.0 * (1.0 - t * 0.8)) as u8;
                 self.blend(x, y, col, a);
+            }
+        }
+    }
+
+    /// Overlay frost: pale specks across the ring plus icicles hanging below it.
+    fn frost(&mut self, cx: f32) {
+        // sparse deterministic frost specks within the ring
+        for y in (CY - R_OUT) as i32..=(CY + R_OUT) as i32 {
+            for x in (cx - R_OUT) as i32..=(cx + R_OUT) as i32 {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - CY;
+                if (dx * dx + dy * dy).sqrt() > R_OUT {
+                    continue;
+                }
+                if ((x * 7 + y * 13) % 17 == 0) || ((x * 5 - y * 3) % 23 == 0) {
+                    self.blend(x, y, FROST, 150);
+                }
+            }
+        }
+        // icicles hanging from the bottom rim
+        for (i, off) in [-9i32, -3, 4, 10].iter().enumerate() {
+            let x = cx as i32 + off;
+            let len = 3 + (i as i32 % 3);
+            let base_y = (CY + R_OUT - 1.0) as i32;
+            for d in 0..len {
+                let a = (220 - d * 50).max(60) as u8;
+                self.blend(x, base_y + d, FROST, a);
             }
         }
     }
@@ -169,33 +217,42 @@ fn render(
     flame_left: bool,
     flame_right: bool,
     frame: u32,
+    frozen: bool,
 ) -> Image<'static> {
-    let mut c = Canvas::new();
+    let mut c = Canvas::new(frozen);
 
     let fv = five.unwrap_or(0.0);
-    c.ring(LEFT_CX, fv, escalate(fv, CORAL, warn, crit));
+    let left_fill = if frozen { ICE_FILL } else { escalate(fv, CORAL, warn, crit) };
+    c.ring(LEFT_CX, fv, left_fill);
     if five.is_some() {
         c.number(LEFT_CX as i32, fv.round() as i32);
     }
-    if flame_left {
-        c.flames(LEFT_CX, frame);
-    }
 
     let sv = seven.unwrap_or(0.0);
-    c.ring(RIGHT_CX, sv, escalate(sv, BLUE, warn, crit));
+    let right_fill = if frozen { ICE_FILL } else { escalate(sv, BLUE, warn, crit) };
+    c.ring(RIGHT_CX, sv, right_fill);
     if seven.is_some() {
         c.number(RIGHT_CX as i32, sv.round() as i32);
     }
-    if flame_right {
-        c.flames(RIGHT_CX, frame);
+
+    if frozen {
+        c.frost(LEFT_CX);
+        c.frost(RIGHT_CX);
+    } else {
+        if flame_left {
+            c.flames(LEFT_CX, frame);
+        }
+        if flame_right {
+            c.flames(RIGHT_CX, frame);
+        }
     }
 
     c.into_image()
 }
 
-/// Static dual gauge (no flames).
+/// Static dual gauge (no flames, not frozen).
 pub fn gauge_dual(five: Option<f64>, seven: Option<f64>, warn: f64, crit: f64) -> Image<'static> {
-    render(five, seven, warn, crit, false, false, 0)
+    render(five, seven, warn, crit, false, false, 0, false)
 }
 
 /// Dual gauge with flame overlay on the chosen ring(s) for the given frame.
@@ -208,5 +265,36 @@ pub fn gauge_dual_flame(
     flame_right: bool,
     frame: u32,
 ) -> Image<'static> {
-    render(five, seven, warn, crit, flame_left, flame_right, frame)
+    render(five, seven, warn, crit, flame_left, flame_right, frame, false)
+}
+
+/// Frozen dual gauge — shown when the quota data is stale (token expired).
+pub fn gauge_dual_frozen(five: Option<f64>, seven: Option<f64>) -> Image<'static> {
+    render(five, seven, 0.0, 0.0, false, false, 0, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn images_have_expected_dimensions() {
+        let img = gauge_dual(Some(50.0), Some(20.0), 75.0, 90.0);
+        assert_eq!(img.width(), W as u32);
+        assert_eq!(img.height(), H as u32);
+        assert_eq!(img.rgba().len(), (W * H * 4) as usize);
+    }
+
+    #[test]
+    fn frozen_and_flame_render_without_panic() {
+        let _ = gauge_dual_frozen(Some(0.0), None);
+        let _ = gauge_dual_flame(Some(100.0), Some(100.0), 75.0, 90.0, true, true, 5);
+    }
+
+    #[test]
+    fn escalate_thresholds() {
+        assert_eq!(escalate(50.0, CORAL, 75.0, 90.0), CORAL);
+        assert_eq!(escalate(80.0, CORAL, 75.0, 90.0), (230, 177, 58));
+        assert_eq!(escalate(95.0, CORAL, 75.0, 90.0), (230, 75, 58));
+    }
 }

@@ -114,3 +114,35 @@ fn claude_version() -> &'static str {
             .unwrap_or_else(|| FALLBACK_VERSION.to_string())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_usage_and_ignores_unknown_fields() {
+        let json = r#"{
+            "five_hour": {"utilization": 14.0, "resets_at": "2026-06-06T12:30:00+00:00"},
+            "seven_day": {"utilization": 3.0, "resets_at": null},
+            "seven_day_sonnet": {"utilization": 0.0, "resets_at": null},
+            "tangelo": null,
+            "extra_usage": {"is_enabled": false}
+        }"#;
+        let u: QuotaUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(u.five_hour.as_ref().unwrap().utilization, 14.0);
+        assert_eq!(
+            u.five_hour.as_ref().unwrap().resets_at.as_deref(),
+            Some("2026-06-06T12:30:00+00:00")
+        );
+        assert_eq!(u.seven_day.as_ref().unwrap().utilization, 3.0);
+        assert!(u.seven_day.as_ref().unwrap().resets_at.is_none());
+        assert!(u.seven_day_opus.is_none());
+    }
+
+    #[test]
+    fn missing_windows_default_to_none() {
+        let u: QuotaUsage = serde_json::from_str("{}").unwrap();
+        assert!(u.five_hour.is_none());
+        assert!(u.seven_day.is_none());
+    }
+}

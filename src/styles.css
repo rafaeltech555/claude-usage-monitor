@@ -127,6 +127,13 @@ body.mode-settings #settings { display: flex; }
 .srow input[type="range"] { width: 110px; accent-color: var(--accent); }
 .srow input[type="checkbox"] { accent-color: var(--accent); }
 
+/* frozen / stale token cue */
+body.stale .pill,
+body.stale .card {
+  border-color: #8fc4e8;
+  box-shadow: 0 0 12px 1px rgba(143, 196, 232, 0.45);
+}
+
 /* crit pulse */
 body.level-crit .pill,
 body.level-crit .card { animation: pulse 1.3s ease-in-out infinite; }

@@ -124,3 +124,55 @@ fn add_usage(acc: &mut TokenUsage, usage: &serde_json::Value, model: &str) {
         + cw1h as f64 / per_m * p.cache_write_1h
         + cache_read as f64 / per_m * p.cache_read;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pricing_by_model() {
+        assert_eq!(pricing_for("claude-opus-4-8").input, 15.0);
+        assert_eq!(pricing_for("claude-sonnet-4-6").input, 3.0);
+        assert_eq!(pricing_for("claude-haiku-4-5").input, 0.80);
+        assert_eq!(pricing_for("something-unknown").input, 3.0); // default sonnet
+    }
+
+    #[test]
+    fn add_usage_splits_cache_pricing() {
+        let mut acc = TokenUsage::default();
+        let usage = serde_json::json!({
+            "input_tokens": 1_000_000,
+            "output_tokens": 1_000_000,
+            "cache_read_input_tokens": 1_000_000,
+            "cache_creation": {
+                "ephemeral_5m_input_tokens": 1_000_000,
+                "ephemeral_1h_input_tokens": 1_000_000
+            }
+        });
+        add_usage(&mut acc, &usage, "claude-sonnet-4-6");
+        assert_eq!(acc.input, 1_000_000);
+        assert_eq!(acc.output, 1_000_000);
+        assert_eq!(acc.cache_read, 1_000_000);
+        assert_eq!(acc.cache_write, 2_000_000);
+        // sonnet: 3 + 15 + 3.75 + 6 + 0.30
+        assert!((acc.cost_usd - 28.05).abs() < 1e-6);
+    }
+
+    #[test]
+    fn add_usage_lumped_cache_uses_5m_rate() {
+        let mut acc = TokenUsage::default();
+        let usage =
+            serde_json::json!({ "cache_creation_input_tokens": 1_000_000 });
+        add_usage(&mut acc, &usage, "claude-sonnet-4-6");
+        assert_eq!(acc.cache_write, 1_000_000);
+        assert!((acc.cost_usd - 3.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn is_today_rejects_old_and_missing() {
+        let today = chrono::Local::now().date_naive();
+        assert!(!is_today(Some("2000-01-01T00:00:00Z"), today));
+        assert!(!is_today(None, today));
+        assert!(!is_today(Some("not-a-date"), today));
+    }
+}

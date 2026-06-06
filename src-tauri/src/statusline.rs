@@ -103,9 +103,12 @@ fn is_ours(sl: &serde_json::Value) -> bool {
 /// Register our statusLine command, backing up settings.json and refusing to
 /// clobber an existing user statusLine.
 pub fn enable() -> Result<(), String> {
-    let path = settings_path().ok_or("找不到家目錄")?;
+    enable_at(&settings_path().ok_or("找不到家目錄")?)
+}
+
+fn enable_at(path: &std::path::Path) -> Result<(), String> {
     let mut obj: serde_json::Value = if path.exists() {
-        let s = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         serde_json::from_str(&s).map_err(|e| format!("settings.json 解析失敗: {e}"))?
     } else {
         serde_json::json!({})
@@ -118,7 +121,7 @@ pub fn enable() -> Result<(), String> {
     }
 
     if path.exists() {
-        let _ = std::fs::copy(&path, path.with_extension("json.cum-backup"));
+        let _ = std::fs::copy(path, path.with_extension("json.cum-backup"));
     }
     obj["statusLine"] = serde_json::json!({
         "type": "command",
@@ -129,23 +132,74 @@ pub fn enable() -> Result<(), String> {
         let _ = std::fs::create_dir_all(dir);
     }
     let out = serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?;
-    std::fs::write(&path, out + "\n").map_err(|e| e.to_string())
+    std::fs::write(path, out + "\n").map_err(|e| e.to_string())
 }
 
 /// Remove our statusLine entry (only if it is ours).
 pub fn disable() -> Result<(), String> {
-    let path = settings_path().ok_or("找不到家目錄")?;
+    disable_at(&settings_path().ok_or("找不到家目錄")?)
+}
+
+fn disable_at(path: &std::path::Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
     }
-    let s = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let mut obj: serde_json::Value = serde_json::from_str(&s).map_err(|e| e.to_string())?;
     if obj.get("statusLine").map(is_ours).unwrap_or(false) {
         if let Some(m) = obj.as_object_mut() {
             m.remove("statusLine");
         }
         let out = serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?;
-        std::fs::write(&path, out + "\n").map_err(|e| e.to_string())?;
+        std::fs::write(path, out + "\n").map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_ours_detects() {
+        assert!(is_ours(
+            &serde_json::json!({"command":"/x/claude-usage-monitor --statusline"})
+        ));
+        assert!(!is_ours(&serde_json::json!({"command":"my-bar --foo"})));
+        assert!(!is_ours(&serde_json::json!({})));
+    }
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("cum-test-{}-{}", std::process::id(), name));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("settings.json")
+    }
+
+    #[test]
+    fn enable_disable_roundtrip_preserves_other_keys() {
+        let path = tmp("roundtrip");
+        std::fs::write(&path, r#"{"theme":"dark","x":1}"#).unwrap();
+
+        enable_at(&path).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(after.get("statusLine").is_some());
+        assert_eq!(after["theme"], "dark");
+
+        disable_at(&path).unwrap();
+        let restored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(restored.get("statusLine").is_none());
+        assert_eq!(restored["theme"], "dark");
+        assert_eq!(restored["x"], 1);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn enable_refuses_existing_user_statusline() {
+        let path = tmp("refuse");
+        std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
+        assert!(enable_at(&path).is_err());
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
 }

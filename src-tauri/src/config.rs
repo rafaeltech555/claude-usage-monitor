@@ -89,3 +89,48 @@ impl Config {
         self.opacity = self.opacity.clamp(0.3, 1.0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_valid() {
+        let c = Config::default();
+        assert_eq!(c.mode, "compact");
+        assert_eq!(c.corner, "tr");
+        assert_eq!(c.poll_secs, MIN_POLL_SECS);
+        assert!(c.effects);
+        assert!(!c.statusline_optin);
+    }
+
+    #[test]
+    fn normalize_clamps_invalid_values() {
+        let mut c = Config {
+            poll_secs: 5,
+            mode: "weird".into(),
+            corner: "zz".into(),
+            opacity: 9.0,
+            ..Config::default()
+        };
+        c.normalize();
+        assert!(c.poll_secs >= MIN_POLL_SECS);
+        assert_eq!(c.mode, "compact");
+        assert_eq!(c.corner, "tr");
+        assert!(c.opacity <= 1.0 && c.opacity >= 0.3);
+    }
+
+    #[test]
+    fn normalize_keeps_valid_values() {
+        let mut c = Config {
+            poll_secs: 300,
+            mode: "detailed".into(),
+            corner: "bl".into(),
+            ..Config::default()
+        };
+        c.normalize();
+        assert_eq!(c.poll_secs, 300);
+        assert_eq!(c.mode, "detailed");
+        assert_eq!(c.corner, "bl");
+    }
+}

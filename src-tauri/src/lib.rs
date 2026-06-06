@@ -258,11 +258,18 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
     let flame_left = rose(util(&prev.five_hour), util(&snap.quota.five_hour));
     let flame_right = rose(util(&prev.seven_day), util(&snap.quota.seven_day));
 
+    // Stale = the token is expired (auth error) → Claude Code hasn't run in a
+    // while. Show the frozen tray look instead of flames.
+    let stale = snap
+        .error
+        .as_deref()
+        .map_or(false, |e| e.contains("401") || e.contains("unauthorized"));
+
     *app.state::<AppState>().latest.lock().unwrap() = snap.clone();
     let _ = app.emit("usage-update", &snap);
-    update_tray(app, &snap, warn, crit);
+    update_tray(app, &snap, warn, crit, stale);
 
-    if effects && (flame_left || flame_right) {
+    if !stale && effects && (flame_left || flame_right) {
         spawn_flame(app.clone(), &snap.quota, warn, crit, flame_left, flame_right);
     }
 }
@@ -364,18 +371,30 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn update_tray(app: &AppHandle, snap: &UsageSnapshot, warn: f64, crit: f64) {
+fn update_tray(app: &AppHandle, snap: &UsageSnapshot, warn: f64, crit: f64, stale: bool) {
     let Some(tray) = app.tray_by_id("main") else { return };
 
     // Redraw the dual gauge: left = 5h (current), right = weekly.
     let five_u = snap.quota.five_hour.as_ref().map(|w| w.utilization);
     let seven_u = snap.quota.seven_day.as_ref().map(|w| w.utilization);
-    let _ = tray.set_icon(Some(icon::gauge_dual(five_u, seven_u, warn, crit)));
+    let icon = if stale {
+        icon::gauge_dual_frozen(five_u, seven_u)
+    } else {
+        icon::gauge_dual(five_u, seven_u, warn, crit)
+    };
+    let _ = tray.set_icon(Some(icon));
     let _ = tray.set_title(Some(format!(
         "{:.0}/{:.0}%",
         five_u.unwrap_or(0.0),
         seven_u.unwrap_or(0.0)
     )));
+
+    if stale {
+        let _ = tray.set_tooltip(Some(
+            "❄ Claude token 已過期，請開啟 Claude Code 以更新用量".to_string(),
+        ));
+        return;
+    }
 
     let five = snap
         .quota
