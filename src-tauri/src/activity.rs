@@ -4,7 +4,10 @@
 
 use chrono::{DateTime, Local};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 /// Silence (seconds) after which a session counts as inactive.
 pub const ACTIVE_WINDOW_SECS: i64 = 120;
@@ -102,6 +105,172 @@ pub fn beats_reset(mins_to_empty: Option<f64>, reset_secs: i64) -> bool {
     }
 }
 
+/// Parse one transcript line; return (timestamp, input+output tokens) for
+/// assistant messages carrying usage, else None.
+pub fn parse_assistant_tokens(line: &str) -> Option<(DateTime<Local>, u64)> {
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if v.get("type")?.as_str()? != "assistant" {
+        return None;
+    }
+    let ts = v.get("timestamp")?.as_str()?;
+    let dt = DateTime::parse_from_rfc3339(ts).ok()?.with_timezone(&Local);
+    let usage = v.get("message")?.get("usage")?;
+    let g = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    Some((dt, g("input_tokens") + g("output_tokens")))
+}
+
+struct FileState {
+    offset: u64,
+    session_total: u64,
+    last_ts: Option<DateTime<Local>>,
+}
+
+/// Incremental tailer: remembers a byte offset per transcript so each tick only
+/// reads appended bytes, and keeps a recent-events ring for rate/sparkline.
+pub struct ActivityTracker {
+    files: HashMap<PathBuf, FileState>,
+    events: VecDeque<(DateTime<Local>, u64)>,
+}
+
+impl ActivityTracker {
+    pub fn new() -> Self {
+        Self {
+            files: HashMap::new(),
+            events: VecDeque::new(),
+        }
+    }
+
+    /// Tail transcripts under `~/.claude/projects`. `force_path` (from a fresh
+    /// statusline hint) is read even if its mtime is borderline.
+    pub fn tick(&mut self, now: DateTime<Local>, force_path: Option<PathBuf>) {
+        let Some(home) = dirs::home_dir() else { return };
+        self.tick_in(&home.join(".claude/projects"), now, force_path);
+    }
+
+    /// Testable core: tail `*/*.jsonl` under `base`.
+    pub fn tick_in(&mut self, base: &Path, now: DateTime<Local>, force_path: Option<PathBuf>) {
+        let pattern = base.join("*/*.jsonl");
+        let Ok(paths) = glob::glob(&pattern.to_string_lossy()) else { return };
+        let recent_cutoff = chrono::Duration::minutes(SPARK_MINUTES as i64 + 2);
+
+        for path in paths.flatten() {
+            let forced = force_path.as_deref() == Some(path.as_path());
+            // mtime prefilter (cheap): skip files untouched recently, unless forced.
+            if !forced {
+                let fresh = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .map(|mt| {
+                        let mt: DateTime<Local> = mt.into();
+                        now - mt <= recent_cutoff
+                    })
+                    .unwrap_or(false);
+                if !fresh {
+                    continue;
+                }
+            }
+            self.ingest_file(&path, now);
+        }
+        self.prune(now);
+    }
+
+    fn ingest_file(&mut self, path: &Path, now: DateTime<Local>) {
+        let Ok(mut f) = std::fs::File::open(path) else { return };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let fs = self.files.entry(path.to_path_buf()).or_insert(FileState {
+            offset: 0,
+            session_total: 0,
+            last_ts: None,
+        });
+        if len < fs.offset {
+            // File truncated/rotated — start over.
+            fs.offset = 0;
+            fs.session_total = 0;
+            fs.last_ts = None;
+        }
+        if f.seek(SeekFrom::Start(fs.offset)).is_err() {
+            return;
+        }
+        let mut buf = String::new();
+        if f.read_to_string(&mut buf).is_err() {
+            return;
+        }
+        // Only consume up to the last complete line; keep a partial tail for next time.
+        let consumed = buf.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        fs.offset += consumed as u64;
+        let recent_cutoff = chrono::Duration::minutes(SPARK_MINUTES as i64 + 1);
+        for line in buf[..consumed].lines() {
+            if let Some((ts, tokens)) = parse_assistant_tokens(line) {
+                fs.session_total += tokens;
+                fs.last_ts = Some(ts);
+                if now - ts <= recent_cutoff && ts <= now {
+                    self.events.push_back((ts, tokens));
+                }
+            }
+        }
+    }
+
+    fn prune(&mut self, now: DateTime<Local>) {
+        let cutoff = now - chrono::Duration::minutes(SPARK_MINUTES as i64 + 1);
+        while let Some((t, _)) = self.events.front() {
+            if *t < cutoff {
+                self.events.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Build the snapshot. `quota_samples`/`five_pct`/`reset_secs` drive the
+    /// time-to-empty estimate; they come from the quota poller.
+    pub fn snapshot(
+        &self,
+        now: DateTime<Local>,
+        hint_fresh: bool,
+        source: &str,
+        quota_samples: &[(DateTime<Local>, f64)],
+        five_pct: Option<f64>,
+        reset_secs: Option<i64>,
+    ) -> LiveActivity {
+        let ev: Vec<(DateTime<Local>, u64)> = self.events.iter().cloned().collect();
+        let last_ts = ev.iter().map(|(t, _)| *t).max();
+        let active = is_active(last_ts, now, hint_fresh);
+        let burn_tpm = burn_rate(&ev, now, RATE_WINDOW_SECS);
+        let spark = spark_buckets(&ev, now, SPARK_MINUTES);
+        let session_tokens = self
+            .files
+            .values()
+            .filter(|f| {
+                f.last_ts
+                    .map_or(false, |t| (now - t).num_seconds() <= ACTIVE_WINDOW_SECS)
+            })
+            .map(|f| f.session_total)
+            .sum();
+        let last_active_secs = last_ts.map_or(0, |t| (now - t).num_seconds().max(0) as u64);
+        let mins = if active {
+            mins_to_empty(quota_samples, five_pct.unwrap_or(100.0))
+        } else {
+            None
+        };
+        let beats = beats_reset(mins, reset_secs.unwrap_or(0));
+        LiveActivity {
+            active,
+            burn_tpm,
+            session_tokens,
+            last_active_secs,
+            mins_to_empty: mins,
+            beats_reset: beats,
+            spark,
+            source: source.to_string(),
+        }
+    }
+}
+
+impl Default for ActivityTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +339,50 @@ mod tests {
         assert!(beats_reset(Some(40.0), 30 * 60)); // empties in 40min, resets in 30min
         assert!(!beats_reset(Some(20.0), 30 * 60)); // empties first
         assert!(!beats_reset(None, 30 * 60));
+    }
+
+    #[test]
+    fn parse_assistant_tokens_extracts_io() {
+        let line = r#"{"type":"assistant","timestamp":"2026-06-07T10:00:00Z","message":{"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":9999}}}"#;
+        let (_, tok) = parse_assistant_tokens(line).unwrap();
+        assert_eq!(tok, 150); // input+output only; cache ignored
+        assert!(parse_assistant_tokens(r#"{"type":"user"}"#).is_none());
+        assert!(parse_assistant_tokens("not json").is_none());
+    }
+
+    #[test]
+    fn tracker_tails_and_sums_recent_session() {
+        let now = Local::now();
+        let stamp = |secs_ago: i64| (now - chrono::Duration::seconds(secs_ago)).to_rfc3339();
+        let base = std::env::temp_dir().join(format!("cum-act-{}", std::process::id()));
+        let proj = base.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        let file = proj.join("session.jsonl");
+        let line = |secs: i64, inp: u64, out: u64| {
+            format!(
+                r#"{{"type":"assistant","timestamp":"{}","message":{{"usage":{{"input_tokens":{},"output_tokens":{}}}}}}}"#,
+                stamp(secs), inp, out
+            )
+        };
+        std::fs::write(&file, format!("{}\n{}\n", line(30, 100, 100), line(60, 50, 50))).unwrap();
+
+        let mut tr = ActivityTracker::new();
+        tr.tick_in(&base, now, None);
+        let snap = tr.snapshot(now, false, "jsonl", &[], None, None);
+
+        assert!(snap.active);
+        assert_eq!(snap.session_tokens, 300); // 200 + 100
+        // (200 + 100) over 5 min = 60 tok/min
+        assert!((snap.burn_tpm - 60.0).abs() < 1e-6);
+
+        // Append a new line; a second tick should only read the new bytes.
+        let mut f = std::fs::OpenOptions::new().append(true).open(&file).unwrap();
+        use std::io::Write;
+        writeln!(f, "{}", line(10, 10, 10)).unwrap();
+        tr.tick_in(&base, now, None);
+        let snap2 = tr.snapshot(now, false, "jsonl", &[], None, None);
+        assert_eq!(snap2.session_tokens, 320); // +20, not double-counted
+
+        std::fs::remove_dir_all(&base).ok();
     }
 }
