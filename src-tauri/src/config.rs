@@ -32,6 +32,8 @@ pub struct Config {
     /// Monthly billing day-of-month (1..=31) for the renewal countdown.
     /// 0 = unset (the renewal line is hidden). Set from your Claude billing page.
     pub renewal_day: u32,
+    /// Show the live-activity block / indicators / burn mode.
+    pub show_activity: bool,
 }
 
 impl Default for Config {
@@ -48,6 +50,7 @@ impl Default for Config {
             effects: true,
             alert_effects: true,
             renewal_day: 0,
+            show_activity: true,
         }
     }
 }
@@ -83,7 +86,7 @@ impl Config {
         if self.poll_secs < MIN_POLL_SECS {
             self.poll_secs = MIN_POLL_SECS;
         }
-        if !matches!(self.mode.as_str(), "compact" | "detailed") {
+        if !matches!(self.mode.as_str(), "compact" | "detailed" | "activity") {
             self.mode = "compact".into();
         }
         if !matches!(self.corner.as_str(), "tl" | "tr" | "bl" | "br") {
@@ -135,5 +138,15 @@ mod tests {
         assert_eq!(c.poll_secs, 300);
         assert_eq!(c.mode, "detailed");
         assert_eq!(c.corner, "bl");
+    }
+
+    #[test]
+    fn show_activity_defaults_on_and_activity_mode_is_valid() {
+        let c = Config::default();
+        assert!(c.show_activity);
+
+        let mut m = Config { mode: "activity".into(), ..Config::default() };
+        m.normalize();
+        assert_eq!(m.mode, "activity"); // must survive normalize
     }
 }
