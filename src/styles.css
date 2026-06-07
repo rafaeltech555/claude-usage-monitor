@@ -8,6 +8,7 @@
   --warn: #e6b13a;   /* amber */
   --crit: #e64b3a;   /* red */
   --ice: #8fc4e8;    /* frozen */
+  --live: #3ddc84;   /* live / active */
   font-family: Inter, "Noto Sans TC", system-ui, Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -28,6 +29,7 @@ html, body {
 body.mode-compact #compact { display: flex; }
 body.mode-detailed #detailed { display: flex; }
 body.mode-settings #settings { display: flex; }
+body.mode-activity #activity { display: flex; }
 
 /* ---------- COMPACT pill ---------- */
 .pill {
@@ -184,3 +186,52 @@ body.alert-crit:not(.stale) #detailed { animation: alertCrit 0.85s ease-in-out i
   0%, 100% { border-color: var(--crit); box-shadow: inset 0 0 2px rgba(230, 75, 58, 0.3); }
   50% { border-color: #ff7a6a; box-shadow: inset 0 0 20px rgba(230, 75, 58, 0.8); }
 }
+
+/* ---------- live activity (A/B detailed block) ---------- */
+.live-block {
+  border-top: 1px solid var(--track);
+  padding-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.live-head { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; }
+.live-tag { display: flex; align-items: center; gap: 6px; color: var(--live); font-weight: 600; }
+.live-proj { color: var(--muted); font-weight: 400; }
+.dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--live);
+  box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.6); animation: ping 1.6s ease-out infinite;
+}
+@keyframes ping {
+  0% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.55); }
+  70% { box-shadow: 0 0 0 7px rgba(61, 220, 132, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(61, 220, 132, 0); }
+}
+.rate-row { display: flex; align-items: baseline; gap: 6px; }
+.rate-big { font-size: 20px; font-weight: 700; color: var(--fg); font-variant-numeric: tabular-nums; }
+.rate-unit { font-size: 11px; color: var(--muted); }
+.la-emptyline { font-size: 11px; color: var(--live); }
+.spark { width: 100%; height: 26px; display: block; }
+.live-block .sess { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.live-block .sess b { color: var(--fg); font-weight: 600; }
+
+/* idle: grey, no pulse, hide the active-only rows */
+.live-block.idle .dot { background: var(--muted); animation: none; box-shadow: none; }
+.live-block.idle .live-tag { color: var(--muted); }
+.live-block.idle .la-active { display: none; }
+
+/* ---------- compact pill indicator (C) ---------- */
+.pill .livedot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--live);
+  box-shadow: 0 0 0 0 rgba(61, 220, 132, 0.6); animation: ping 1.6s ease-out infinite; margin-left: auto;
+}
+.pill .liverate { color: var(--live); font-size: 11px; font-weight: 600; }
+
+/* ---------- standalone burn mode (D) ---------- */
+.actcard .actbody {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center; gap: 4px;
+}
+.act-rate { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.act-unit { font-size: 11px; color: var(--muted); }
+.actcard .spark { width: 170px; }

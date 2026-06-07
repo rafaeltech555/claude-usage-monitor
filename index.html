@@ -16,6 +16,8 @@
         <span id="c-five" class="pct">—</span>
         <span class="sep">·</span>
         <span id="c-reset" class="reset">⏱ —</span>
+        <span id="c-livedot" class="livedot" hidden></span>
+        <span id="c-liverate" class="liverate" hidden></span>
       </span>
       <span class="frozen">❄ 請重新登入</span>
     </div>
@@ -25,6 +27,7 @@
       <div class="card-head" data-tauri-drag-region>
         <span class="title">⚡ Claude Max</span>
         <span class="head-actions">
+          <button id="btn-activity" class="iconbtn" title="即時燒速">🔥</button>
           <button id="btn-collapse" class="iconbtn" title="精簡模式">⊟</button>
           <button id="btn-hide" class="iconbtn" title="收回系統匣">✕</button>
         </span>
@@ -49,6 +52,19 @@
           <div id="d-seven-reset" class="reset small">重置 —</div>
         </div>
 
+        <div id="live-block" class="live-block" hidden>
+          <div class="live-head">
+            <span class="live-tag"><span class="dot"></span><span id="la-state">活動中</span>
+              <span id="la-proj" class="live-proj"></span></span>
+          </div>
+          <div class="rate-row la-active">
+            <span id="la-rate" class="rate-big">—</span><span class="rate-unit">tok/min</span>
+          </div>
+          <div id="la-empty" class="la-active la-emptyline"></div>
+          <svg id="la-spark" class="spark la-active" viewBox="0 0 240 26" preserveAspectRatio="none"></svg>
+          <div id="la-sess" class="sess"></div>
+        </div>
+
         <div class="foot">
           <span id="d-today" class="today">今日 — tok</span>
           <span id="d-cost" class="cost">~$0.00</span>
@@ -61,6 +77,24 @@
         <div class="frozen-icon">❄</div>
         <div class="frozen-title">Token 已過期</div>
         <div class="frozen-sub">請開啟 Claude Code 重新登入<br>以恢復用量監控</div>
+      </div>
+    </div>
+
+    <!-- ACTIVITY: standalone big burn-rate mode -->
+    <div id="activity" class="widget card actcard">
+      <div class="card-head" data-tauri-drag-region>
+        <span class="title">🔥 即時燒速</span>
+        <span class="head-actions">
+          <button id="btn-act-back" class="iconbtn" title="返回詳細">←</button>
+          <button id="btn-act-hide" class="iconbtn" title="收回系統匣">✕</button>
+        </span>
+      </div>
+      <div class="actbody">
+        <div class="live-tag"><span class="dot"></span><span id="act-state">活動中</span></div>
+        <div id="act-rate" class="act-rate">—</div>
+        <div class="act-unit">tok / 分鐘</div>
+        <svg id="act-spark" class="spark" viewBox="0 0 180 26" preserveAspectRatio="none"></svg>
+        <div id="act-empty" class="la-emptyline"></div>
       </div>
     </div>
 
@@ -86,6 +120,7 @@
         <select id="s-mode">
           <option value="compact">精簡</option>
           <option value="detailed">詳細</option>
+          <option value="activity">即時燒速</option>
         </select>
       </label>
 
@@ -119,6 +154,10 @@
 
       <label class="srow check">
         <input id="s-alerts" type="checkbox" /> 達到門檻時警示特效
+      </label>
+
+      <label class="srow check">
+        <input id="s-activity" type="checkbox" /> 顯示即時活動
       </label>
 
       <label class="srow check" title="啟用後會在 ~/.claude/settings.json 註冊 statusLine（先備份、不覆蓋既有設定），讓有 session 在跑時即時更新且免打 API">
