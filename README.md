@@ -17,19 +17,27 @@
   - 正常、**用量上升火焰**、**達門檻脈動警示**、**token 過期結冰**
 - **門檻警示（可開關）**：5h 與每週**各自獨立**判定顏色（ok → 琥珀(warn) → 紅(crit)）；達門檻時 widget 與系統匣對應的環會以該顏色**脈動**，相當明顯。
 - **過期結冰**：OAuth token 過期（太久沒開 Claude Code）時，精簡/詳細/系統匣都會「結冰」並**停止顯示舊數據**，明確提示「請開啟 Claude Code 重新登入」。
-- **釘選任何角落**：無邊框、永遠置頂，可拖到四角並自動記住位置。
+- **可選渲染風格（4 種）**：設定可切換主題,即時換皮、四畫面 + 系統匣雙環同步變色。內嵌字體(OFL)。
+  - **經典**:原始 coral/blue 深色(預設)。
+  - **奧術 HUD**:黑曜玻璃 + 金色 filigree + 青色 HUD 角標(Cinzel + Orbitron)。
+  - **魔法羊皮紙**:哈利波特風老羊皮紙 + 墨水 + 火漆角飾 + 燭火餘燼脈動(IM Fell English + Cinzel Decorative)。
+  - **魔導霓虹**:電路網格 + 青/洋紅霓虹 + 掃描線(Orbitron + Share Tech Mono)。
+- **釘選任何角落**：無邊框、永遠置頂,可拖到四角並自動記住位置。
+- **單一實例**：重複啟動(或開機自啟與手動啟動相撞)只會把既有視窗叫回前景,不會開出第二個托盤圖示。
 - **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。
 
 ## 安裝
 
 ```bash
-# Debian/Ubuntu/Mint
-sudo dpkg -i claude-usage-monitor_0.1.0_amd64.deb
+# Debian/Ubuntu/Mint（檔名含空格,記得加引號）
+sudo dpkg -i "Claude Usage Monitor_0.1.0_amd64.deb"
 
 # 或免安裝
-chmod +x claude-usage-monitor_0.1.0_amd64.AppImage
-./claude-usage-monitor_0.1.0_amd64.AppImage
+chmod +x "Claude Usage Monitor_0.1.0_amd64.AppImage"
+"./Claude Usage Monitor_0.1.0_amd64.AppImage"
 ```
+
+安裝後在應用程式選單搜尋「**Claude Usage Monitor**」即可開啟(可釘到 Dock/我的最愛);設定裡勾「開機自動啟動」後重開機會自動出現。
 
 需要已安裝並登入 Claude Code（讀取 `~/.claude/.credentials.json` 的 OAuth token；token 僅在記憶體使用、只透過 TLS 送往官方 `api.anthropic.com`，不寫入磁碟或 log）。
 
@@ -52,7 +60,7 @@ npm test                                           # 前端 vitest：格式化 +
 
 ## 設定檔
 
-`~/.config/claude-usage-monitor/config.json`：模式、角落、更新間隔(≥180s)、警示/危險門檻、帳單日、透明度、開機啟動、火焰特效(`effects`)、警示特效(`alert_effects`)、顯示即時活動(`show_activity`)、statusline opt-in。
+`~/.config/claude-usage-monitor/config.json`：模式、角落、更新間隔(≥180s)、警示/危險門檻、帳單日、透明度、開機啟動、火焰特效(`effects`)、警示特效(`alert_effects`)、顯示即時活動(`show_activity`)、渲染風格(`theme`:classic/arcane/wizard/neon)、statusline opt-in。
 
 ## 桌面環境備註
 

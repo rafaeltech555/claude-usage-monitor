@@ -53,6 +53,15 @@ pub fn run() {
     let want_autostart = config.autostart;
 
     tauri::Builder::default()
+        // Single-instance MUST be the first plugin. A second launch (re-running
+        // the binary, or autostart racing a manual launch) just surfaces the
+        // existing widget instead of spawning another tray icon + window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -75,6 +84,7 @@ pub fn run() {
             refresh_now,
             get_snapshot,
             get_activity,
+            redraw_tray,
             fit_detailed,
             fit_compact,
             set_autostart,
@@ -223,6 +233,23 @@ fn get_snapshot(state: State<AppState>) -> UsageSnapshot {
 #[tauri::command]
 fn get_activity(app: AppHandle) -> activity::LiveActivity {
     build_activity(&app)
+}
+
+/// Redraw the tray icon with the latest snapshot — used after a theme change so
+/// the ring colors update immediately instead of waiting for the next poll.
+#[tauri::command]
+fn redraw_tray(app: AppHandle) {
+    let (snap, warn, crit) = {
+        let st = app.state::<AppState>();
+        let s = st.latest.lock().unwrap().clone();
+        let c = st.config.lock().unwrap();
+        (s, c.warn_threshold, c.crit_threshold)
+    };
+    let stale = snap
+        .error
+        .as_deref()
+        .map_or(false, |e| e.contains("401") || e.contains("unauthorized"));
+    update_tray(&app, &snap, warn, crit, stale);
 }
 
 #[tauri::command]
@@ -435,36 +462,44 @@ fn spawn_flame(app: AppHandle, gen: u64, quota: &QuotaUsage, warn: f64, crit: f6
     let five = quota.five_hour.as_ref().map(|w| w.utilization);
     let seven = quota.seven_day.as_ref().map(|w| w.utilization);
     tauri::async_runtime::spawn(async move {
+        let (lc, rc) = ring_palette(&app);
         for frame in 0..26u32 {
             if app.state::<AppState>().anim_gen.load(Ordering::SeqCst) != gen {
                 return;
             }
             if let Some(tray) = app.tray_by_id("main") {
                 let _ = tray.set_icon(Some(icon::gauge_dual_flame(
-                    five, seven, warn, crit, left, right, frame,
+                    five, seven, warn, crit, lc, rc, left, right, frame,
                 )));
             }
             tokio::time::sleep(Duration::from_millis(85)).await;
         }
         if app.state::<AppState>().anim_gen.load(Ordering::SeqCst) == gen {
             if let Some(tray) = app.tray_by_id("main") {
-                let _ = tray.set_icon(Some(icon::gauge_dual(five, seven, warn, crit)));
+                let _ = tray.set_icon(Some(icon::gauge_dual(five, seven, warn, crit, lc, rc)));
             }
         }
     });
+}
+
+/// The tray ring base colors for the current render theme.
+fn ring_palette(app: &AppHandle) -> ((u8, u8, u8), (u8, u8, u8)) {
+    let theme = app.state::<AppState>().config.lock().unwrap().theme.clone();
+    icon::theme_palette(&theme)
 }
 
 /// Continuously pulse the warn/crit ring(s) in the tray until the generation
 /// changes (next poll) — the tray counterpart of the widget alert glow.
 fn spawn_alert(app: AppHandle, gen: u64, five: Option<f64>, seven: Option<f64>, warn: f64, crit: f64) {
     tauri::async_runtime::spawn(async move {
+        let (lc, rc) = ring_palette(&app);
         let mut frame: u32 = 0;
         loop {
             if app.state::<AppState>().anim_gen.load(Ordering::SeqCst) != gen {
                 return;
             }
             if let Some(tray) = app.tray_by_id("main") {
-                let _ = tray.set_icon(Some(icon::gauge_dual_alert(five, seven, warn, crit, frame)));
+                let _ = tray.set_icon(Some(icon::gauge_dual_alert(five, seven, warn, crit, lc, rc, frame)));
             }
             frame = frame.wrapping_add(1);
             tokio::time::sleep(Duration::from_millis(120)).await;
@@ -511,8 +546,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
+    let (lc, rc) = ring_palette(app);
     let builder = TrayIconBuilder::with_id("main")
-        .icon(icon::gauge_dual(Some(0.0), Some(0.0), 75.0, 90.0))
+        .icon(icon::gauge_dual(Some(0.0), Some(0.0), 75.0, 90.0, lc, rc))
         .icon_as_template(false)
         .tooltip("Claude Usage Monitor")
         .menu(&menu)
@@ -552,10 +588,11 @@ fn update_tray(app: &AppHandle, snap: &UsageSnapshot, warn: f64, crit: f64, stal
     // Redraw the dual gauge: left = 5h (current), right = weekly.
     let five_u = snap.quota.five_hour.as_ref().map(|w| w.utilization);
     let seven_u = snap.quota.seven_day.as_ref().map(|w| w.utilization);
+    let (lc, rc) = ring_palette(app);
     let icon = if stale {
         icon::gauge_dual_frozen(five_u, seven_u)
     } else {
-        icon::gauge_dual(five_u, seven_u, warn, crit)
+        icon::gauge_dual(five_u, seven_u, warn, crit, lc, rc)
     };
     let _ = tray.set_icon(Some(icon));
     let _ = tray.set_title(Some(format!(
