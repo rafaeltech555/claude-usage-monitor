@@ -10,11 +10,43 @@
 
 use crate::config::Config;
 use crate::quota::{QuotaUsage, QuotaWindow};
+use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub fn data_path() -> PathBuf {
     Config::dir().join("statusline.json")
+}
+
+pub fn hint_path() -> PathBuf {
+    Config::dir().join("activity-hint.json")
+}
+
+/// Which Claude Code session is currently rendering a statusline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ActivityHint {
+    pub transcript_path: Option<String>,
+    pub session_id: Option<String>,
+}
+
+/// Pure: extract the active-session hint from Claude Code's statusline stdin.
+pub fn parse_hint(v: &serde_json::Value) -> ActivityHint {
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(String::from);
+    ActivityHint {
+        transcript_path: s("transcript_path"),
+        session_id: s("session_id"),
+    }
+}
+
+/// Read the hint if its file was written within `max_age_secs`.
+pub fn read_hint_fresh(max_age_secs: u64) -> Option<ActivityHint> {
+    let p = hint_path();
+    let modified = std::fs::metadata(&p).ok()?.modified().ok()?;
+    let age = std::time::SystemTime::now().duration_since(modified).ok()?;
+    if age.as_secs() > max_age_secs {
+        return None;
+    }
+    serde_json::from_str(&std::fs::read_to_string(&p).ok()?).ok()
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -52,6 +84,15 @@ pub fn run_hook() {
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
+        if std::fs::write(&p, json).is_ok() {
+            set_owner_only(&p);
+        }
+    }
+
+    // Persist the active-session hint (best-effort) for the live-activity ticker.
+    let hint = parse_hint(&v);
+    if let Ok(json) = serde_json::to_string(&hint) {
+        let p = hint_path();
         if std::fs::write(&p, json).is_ok() {
             set_owner_only(&p);
         }
@@ -201,5 +242,20 @@ mod tests {
         std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
         assert!(enable_at(&path).is_err());
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn parse_hint_pulls_session_fields() {
+        let v = serde_json::json!({
+            "transcript_path": "/home/u/.claude/projects/p/s.jsonl",
+            "session_id": "abc-123",
+            "rate_limits": {}
+        });
+        let h = parse_hint(&v);
+        assert_eq!(h.transcript_path.as_deref(), Some("/home/u/.claude/projects/p/s.jsonl"));
+        assert_eq!(h.session_id.as_deref(), Some("abc-123"));
+
+        let empty = parse_hint(&serde_json::json!({}));
+        assert!(empty.transcript_path.is_none());
     }
 }
