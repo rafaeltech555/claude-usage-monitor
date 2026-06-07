@@ -46,6 +46,7 @@ type Config = {
   effects: boolean;
   alert_effects: boolean;
   show_activity: boolean;
+  theme: string;
   renewal_day: number;
 };
 
@@ -106,7 +107,15 @@ function fitWindow() {
 }
 
 function applyOpacity(v: number) {
-  document.documentElement.style.setProperty("--bg", `rgba(30,30,40,${v})`);
+  // bare number; themed backgrounds fold it in via rgb(... / var(--opacity))
+  document.documentElement.style.setProperty("--opacity", String(v));
+}
+
+const THEMES = ["classic", "arcane", "wizard", "neon"];
+function applyTheme(name: string) {
+  const t = THEMES.includes(name) ? name : "classic";
+  document.body.classList.remove(...THEMES.map((x) => "theme-" + x));
+  document.body.classList.add("theme-" + t);
 }
 
 function saveCfg() {
@@ -125,6 +134,7 @@ function populateSettings() {
   (document.getElementById("s-effects") as HTMLInputElement).checked = cfg.effects;
   (document.getElementById("s-alerts") as HTMLInputElement).checked = cfg.alert_effects;
   (document.getElementById("s-activity") as HTMLInputElement).checked = cfg.show_activity;
+  (document.getElementById("s-theme") as HTMLSelectElement).value = cfg.theme;
   (document.getElementById("s-statusline") as HTMLInputElement).checked = cfg.statusline_optin;
   $("s-statusline-msg").hidden = true;
 }
@@ -193,6 +203,16 @@ function wireSettings() {
     cfg.show_activity = (el as HTMLInputElement).checked;
     saveCfg();
     applyActivityVisibility();
+  });
+  on("s-theme", "change", (el) => {
+    cfg.theme = el.value;
+    applyTheme(cfg.theme);
+    saveCfg();
+    invoke("redraw_tray"); // recolor the tray rings immediately
+    // theme fonts/decoration change metrics — re-fit the active window
+    lastFitH = 0;
+    lastFitW = 0;
+    requestAnimationFrame(fitWindow);
   });
   on("s-statusline", "change", async (el) => {
     const box = el as HTMLInputElement;
@@ -410,6 +430,7 @@ function tick() {
 window.addEventListener("DOMContentLoaded", async () => {
   cfg = await invoke<Config>("get_config");
   setMode(cfg.mode);
+  applyTheme(cfg.theme);
   applyOpacity(cfg.opacity);
   wireSettings();
 

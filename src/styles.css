@@ -1,5 +1,9 @@
 :root {
-  --bg: rgba(30, 30, 40, 0.96);
+  /* opacity is a bare number so themed backgrounds can fold it into their own
+     colors via `rgb(r g b / var(--opacity))` (set by applyOpacity in main.ts). */
+  --opacity: 0.96;
+  --bg: rgb(30 30 40 / var(--opacity)); /* classic panel */
+  --panel: var(--bg);                   /* themes may override with a gradient */
   --fg: #ececf2;
   --muted: #9a9aae;
   --track: #3a3a4d;
@@ -9,6 +13,8 @@
   --crit: #e64b3a;   /* red */
   --ice: #8fc4e8;    /* frozen */
   --live: #3ddc84;   /* live / active */
+  --title-font: inherit;
+  --num-font: inherit;
   font-family: Inter, "Noto Sans TC", system-ui, Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -38,7 +44,7 @@ body.mode-activity #activity { display: flex; }
   width: 100%;
   height: 100%;
   padding: 0 14px;
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--accent);
   border-radius: 999px;
   font-size: 14px;
@@ -64,7 +70,7 @@ body.mode-activity #activity { display: flex; }
   width: 100%;
   height: 100%;
   padding: 10px 12px;
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--accent);
   border-radius: 12px;
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
@@ -76,7 +82,7 @@ body.mode-activity #activity { display: flex; }
   justify-content: space-between;
   cursor: grab;
 }
-.card-head .title { font-weight: 700; font-size: 13px; }
+.card-head .title { font-weight: 700; font-size: 13px; font-family: var(--title-font); }
 .head-actions { display: flex; gap: 4px; }
 .iconbtn {
   background: transparent;
@@ -235,3 +241,132 @@ body.alert-crit:not(.stale) #detailed { animation: alertCrit 0.85s ease-in-out i
 .act-rate { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .act-unit { font-size: 11px; color: var(--muted); }
 .actcard .spark { width: 170px; }
+
+/* =====================================================================
+   THEMES — selectable render styles (body.theme-*). Classic = :root.
+   Themes mostly swap CSS variables; a few add decorative pseudo-elements.
+   ===================================================================== */
+
+/* bundled display fonts (OFL) */
+@font-face { font-family:'Cinzel'; src:url('./assets/fonts/cinzel-700.woff2') format('woff2'); font-weight:700; font-display:swap; }
+@font-face { font-family:'Cinzel Decorative'; src:url('./assets/fonts/cinzeldecorative-700.woff2') format('woff2'); font-weight:700; font-display:swap; }
+@font-face { font-family:'Orbitron'; src:url('./assets/fonts/orbitron-700.woff2') format('woff2'); font-weight:700; font-display:swap; }
+@font-face { font-family:'Orbitron'; src:url('./assets/fonts/orbitron-800.woff2') format('woff2'); font-weight:800; font-display:swap; }
+@font-face { font-family:'IM Fell English'; src:url('./assets/fonts/imfell-400.woff2') format('woff2'); font-weight:400; font-style:normal; font-display:swap; }
+@font-face { font-family:'IM Fell English'; src:url('./assets/fonts/imfell-italic.woff2') format('woff2'); font-weight:400; font-style:italic; font-display:swap; }
+@font-face { font-family:'Share Tech Mono'; src:url('./assets/fonts/sharetechmono-400.woff2') format('woff2'); font-weight:400; font-display:swap; }
+
+/* numeric elements pick up the theme's number font */
+.pct, .meter-row .val, .rate-big, .foot .cost, .liverate, .act-rate {
+  font-family: var(--num-font);
+}
+
+/* anchor decorative pseudo-elements to the detailed card */
+body.theme-arcane #detailed,
+body.theme-wizard #detailed { position: relative; }
+body.theme-neon #detailed { position: relative; overflow: hidden; }
+
+/* ---------- A · 奧術 HUD (arcane) ---------- */
+body.theme-arcane {
+  --panel: linear-gradient(160deg, rgb(22 20 34 / var(--opacity)), rgb(12 11 20 / var(--opacity)));
+  --fg: #ece8f6;
+  --muted: #9a93b0;
+  --track: #2a2740;
+  --accent: #e8c069;  /* gold (5h) */
+  --week: #46e6ff;    /* cyan (weekly) */
+  --live: #37e0a0;
+  --title-font: 'Cinzel', serif;
+  --num-font: 'Orbitron', sans-serif;
+}
+body.theme-arcane .pill,
+body.theme-arcane .card {
+  border-color: rgb(232 192 105 / 0.42);
+  box-shadow: 0 10px 34px rgba(0,0,0,0.6), inset 0 0 26px rgba(70,230,255,0.05);
+}
+body.theme-arcane .card-head .title { color: var(--accent); text-shadow: 0 0 10px rgba(232,192,105,0.35); }
+body.theme-arcane .bar-fill { box-shadow: 0 0 8px rgba(232,192,105,0.5); }
+body.theme-arcane .bar-fill.week { box-shadow: 0 0 8px rgba(70,230,255,0.45); }
+body.theme-arcane .rate-big { text-shadow: 0 0 12px rgba(70,230,255,0.3); }
+body.theme-arcane #detailed::before,
+body.theme-arcane #detailed::after {
+  content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none;
+}
+body.theme-arcane #detailed::before { left: 5px; top: 5px; border-left: 2px solid var(--week); border-top: 2px solid var(--week); }
+body.theme-arcane #detailed::after  { right: 5px; bottom: 5px; border-right: 2px solid var(--week); border-bottom: 2px solid var(--week); }
+
+/* ---------- B · 符文黑曜 → 巫師羊皮紙 (wizard) ---------- */
+body.theme-wizard {
+  --panel:
+    radial-gradient(120% 60% at 30% 10%, rgb(255 250 235 / var(--opacity)), transparent 55%),
+    radial-gradient(80% 70% at 90% 100%, rgba(150,120,70,0.22), transparent 60%),
+    linear-gradient(160deg, rgb(239 226 193 / var(--opacity)), rgb(216 197 150 / var(--opacity)));
+  --fg: #3a2c16;
+  --muted: #5a4525;
+  --track: rgba(58,44,22,0.16);
+  --accent: #9a3b2a;  /* crimson-brown (5h) */
+  --week: #5c6b34;    /* moss (weekly) */
+  --live: #c8761e;    /* ember */
+  --title-font: 'Cinzel Decorative', "Noto Serif TC", serif;
+  --num-font: 'IM Fell English', "Noto Serif TC", serif;
+  font-family: 'IM Fell English', "Noto Serif TC", Georgia, serif;
+}
+body.theme-wizard .pill,
+body.theme-wizard .card {
+  border-color: #7c5a2a;
+  box-shadow: 0 10px 34px rgba(0,0,0,0.55), inset 0 0 0 2px rgba(124,90,42,0.25), inset 0 0 28px rgba(120,80,30,0.16);
+}
+body.theme-wizard .card-head .title { color: #6a1f18; text-shadow: 0 1px 0 rgba(255,250,230,0.5); }
+body.theme-wizard .iconbtn { color: #6b4a22; }
+body.theme-wizard .iconbtn:hover { background: rgba(124,90,42,0.18); color: #3a2c16; }
+body.theme-wizard .bar { border: 1px solid rgba(124,90,42,0.4); }
+body.theme-wizard .bar-fill { background: linear-gradient(90deg, #7c2b22, #b8893a); box-shadow: 0 0 6px rgba(184,137,58,0.4); }
+body.theme-wizard .bar-fill.week { background: linear-gradient(90deg, #3c5a3a, #7a8f4a); }
+body.theme-wizard .reset.small,
+body.theme-wizard .pill .reset { color: #6b4a22; font-style: italic; }
+body.theme-wizard .meter-row .val,
+body.theme-wizard .foot .cost { font-style: italic; }
+body.theme-wizard .dot { background: radial-gradient(circle, #ffd27a, #e6892a); box-shadow: 0 0 7px #f0a83c; animation: ember 1.6s ease-in-out infinite; }
+body.theme-wizard #detailed::before,
+body.theme-wizard #detailed::after {
+  content: "❧"; position: absolute; color: #7c2b22; font-size: 12px; opacity: 0.8; pointer-events: none;
+}
+body.theme-wizard #detailed::before { left: 7px; top: 3px; }
+body.theme-wizard #detailed::after  { content: "❦"; right: 7px; bottom: 2px; }
+@keyframes ember {
+  0%, 100% { box-shadow: 0 0 6px #f0a83c; }
+  50% { box-shadow: 0 0 12px #ffc46a; }
+}
+
+/* ---------- C · 魔導霓虹 (neon) ---------- */
+body.theme-neon {
+  --panel:
+    repeating-linear-gradient(90deg, rgba(47,243,255,0.035) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(0deg, rgba(47,243,255,0.035) 0 1px, transparent 1px 26px),
+    linear-gradient(165deg, rgb(8 16 24 / var(--opacity)), rgb(6 8 14 / var(--opacity)));
+  --fg: #dffaff;
+  --muted: #7f9bb0;
+  --track: #13202c;
+  --accent: #2ff3ff;  /* cyan (5h) */
+  --week: #ff54da;    /* magenta (weekly) */
+  --live: #36f0a6;
+  --title-font: 'Orbitron', sans-serif;
+  --num-font: 'Share Tech Mono', monospace;
+}
+body.theme-neon .pill,
+body.theme-neon .card {
+  border-color: rgb(47 243 255 / 0.4);
+  box-shadow: 0 10px 34px rgba(0,0,0,0.6), 0 0 20px rgba(47,243,255,0.12), inset 0 0 22px rgba(47,243,255,0.05);
+}
+body.theme-neon .card-head .title { color: var(--accent); text-shadow: 0 0 10px rgba(47,243,255,0.5); letter-spacing: 1px; }
+body.theme-neon .bar-fill { box-shadow: 0 0 10px rgba(47,243,255,0.6); }
+body.theme-neon .bar-fill.week { box-shadow: 0 0 10px rgba(255,84,218,0.55); }
+body.theme-neon .rate-big { text-shadow: 0 0 12px rgba(47,243,255,0.5); }
+body.theme-neon #detailed::before {
+  content: ""; position: absolute; left: 0; right: 0; height: 36px; top: -36px;
+  background: linear-gradient(180deg, transparent, rgba(47,243,255,0.10), transparent);
+  animation: sweep 4.2s linear infinite; pointer-events: none;
+}
+@keyframes sweep {
+  0% { top: -36px; }
+  100% { top: 110%; }
+}

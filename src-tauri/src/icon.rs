@@ -227,9 +227,22 @@ impl Canvas {
     }
 }
 
+/// (left = 5h, right = weekly) ring base colors per render theme.
+pub fn theme_palette(theme: &str) -> ((u8, u8, u8), (u8, u8, u8)) {
+    match theme {
+        "arcane" => ((232, 192, 105), (70, 230, 255)),
+        "wizard" => ((154, 59, 42), (122, 143, 74)),
+        "neon" => ((47, 243, 255), (255, 84, 218)),
+        _ => (CORAL, BLUE), // classic
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render(
     five: Option<f64>,
     seven: Option<f64>,
+    left_base: (u8, u8, u8),
+    right_base: (u8, u8, u8),
     warn: f64,
     crit: f64,
     flame_left: bool,
@@ -240,7 +253,7 @@ fn render(
     let mut c = Canvas::new(frozen);
 
     let fv = five.unwrap_or(0.0);
-    let left_fill = if frozen { ICE_FILL } else { escalate(fv, CORAL, warn, crit) };
+    let left_fill = if frozen { ICE_FILL } else { escalate(fv, left_base, warn, crit) };
     c.ring(LEFT_CX, fv, left_fill);
     // Frozen = data is stale; don't render the (stale) numbers.
     if five.is_some() && !frozen {
@@ -248,7 +261,7 @@ fn render(
     }
 
     let sv = seven.unwrap_or(0.0);
-    let right_fill = if frozen { ICE_FILL } else { escalate(sv, BLUE, warn, crit) };
+    let right_fill = if frozen { ICE_FILL } else { escalate(sv, right_base, warn, crit) };
     c.ring(RIGHT_CX, sv, right_fill);
     if seven.is_some() && !frozen {
         c.number(RIGHT_CX as i32, sv.round() as i32);
@@ -270,42 +283,55 @@ fn render(
 }
 
 /// Static dual gauge (no flames, not frozen).
-pub fn gauge_dual(five: Option<f64>, seven: Option<f64>, warn: f64, crit: f64) -> Image<'static> {
-    render(five, seven, warn, crit, false, false, 0, false)
+pub fn gauge_dual(
+    five: Option<f64>,
+    seven: Option<f64>,
+    warn: f64,
+    crit: f64,
+    left_base: (u8, u8, u8),
+    right_base: (u8, u8, u8),
+) -> Image<'static> {
+    render(five, seven, left_base, right_base, warn, crit, false, false, 0, false)
 }
 
 /// Dual gauge with flame overlay on the chosen ring(s) for the given frame.
+#[allow(clippy::too_many_arguments)]
 pub fn gauge_dual_flame(
     five: Option<f64>,
     seven: Option<f64>,
     warn: f64,
     crit: f64,
+    left_base: (u8, u8, u8),
+    right_base: (u8, u8, u8),
     flame_left: bool,
     flame_right: bool,
     frame: u32,
 ) -> Image<'static> {
-    render(five, seven, warn, crit, flame_left, flame_right, frame, false)
+    render(five, seven, left_base, right_base, warn, crit, flame_left, flame_right, frame, false)
 }
 
 /// Frozen dual gauge — shown when the quota data is stale (token expired).
 pub fn gauge_dual_frozen(five: Option<f64>, seven: Option<f64>) -> Image<'static> {
-    render(five, seven, 0.0, 0.0, false, false, 0, true)
+    render(five, seven, CORAL, BLUE, 0.0, 0.0, false, false, 0, true)
 }
 
 /// Dual gauge with a pulsing alert throb on any ring at/above the warn
 /// threshold, in that ring's own (amber/red) colour.
+#[allow(clippy::too_many_arguments)]
 pub fn gauge_dual_alert(
     five: Option<f64>,
     seven: Option<f64>,
     warn: f64,
     crit: f64,
+    left_base: (u8, u8, u8),
+    right_base: (u8, u8, u8),
     frame: u32,
 ) -> Image<'static> {
     let mut c = Canvas::new(false);
     let amp = 0.2 + 0.8 * (0.5 + 0.5 * ((frame as f32) * 0.45).sin());
 
     let fv = five.unwrap_or(0.0);
-    let lc = escalate(fv, CORAL, warn, crit);
+    let lc = escalate(fv, left_base, warn, crit);
     c.ring(LEFT_CX, fv, lc);
     if five.is_some() {
         c.number(LEFT_CX as i32, fv.round() as i32);
@@ -315,7 +341,7 @@ pub fn gauge_dual_alert(
     }
 
     let sv = seven.unwrap_or(0.0);
-    let rc = escalate(sv, BLUE, warn, crit);
+    let rc = escalate(sv, right_base, warn, crit);
     c.ring(RIGHT_CX, sv, rc);
     if seven.is_some() {
         c.number(RIGHT_CX as i32, sv.round() as i32);
@@ -333,7 +359,7 @@ mod tests {
 
     #[test]
     fn images_have_expected_dimensions() {
-        let img = gauge_dual(Some(50.0), Some(20.0), 75.0, 90.0);
+        let img = gauge_dual(Some(50.0), Some(20.0), 75.0, 90.0, CORAL, BLUE);
         assert_eq!(img.width(), W as u32);
         assert_eq!(img.height(), H as u32);
         assert_eq!(img.rgba().len(), (W * H * 4) as usize);
@@ -342,7 +368,10 @@ mod tests {
     #[test]
     fn frozen_and_flame_render_without_panic() {
         let _ = gauge_dual_frozen(Some(0.0), None);
-        let _ = gauge_dual_flame(Some(100.0), Some(100.0), 75.0, 90.0, true, true, 5);
+        let _ = gauge_dual_flame(Some(100.0), Some(100.0), 75.0, 90.0, CORAL, BLUE, true, true, 5);
+        let _ = gauge_dual_alert(Some(80.0), Some(95.0), 75.0, 90.0, CORAL, BLUE, 3);
+        assert_eq!(theme_palette("neon").0, (47, 243, 255));
+        assert_eq!(theme_palette("bogus"), (CORAL, BLUE));
     }
 
     #[test]

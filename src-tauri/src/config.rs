@@ -34,6 +34,8 @@ pub struct Config {
     pub renewal_day: u32,
     /// Show the live-activity block / indicators / burn mode.
     pub show_activity: bool,
+    /// Render theme: "classic" | "arcane" | "wizard" | "neon".
+    pub theme: String,
 }
 
 impl Default for Config {
@@ -51,6 +53,7 @@ impl Default for Config {
             alert_effects: true,
             renewal_day: 0,
             show_activity: true,
+            theme: "classic".into(),
         }
     }
 }
@@ -91,6 +94,9 @@ impl Config {
         }
         if !matches!(self.corner.as_str(), "tl" | "tr" | "bl" | "br") {
             self.corner = "tr".into();
+        }
+        if !matches!(self.theme.as_str(), "classic" | "arcane" | "wizard" | "neon") {
+            self.theme = "classic".into();
         }
         self.opacity = self.opacity.clamp(0.3, 1.0);
     }
@@ -138,6 +144,17 @@ mod tests {
         assert_eq!(c.poll_secs, 300);
         assert_eq!(c.mode, "detailed");
         assert_eq!(c.corner, "bl");
+    }
+
+    #[test]
+    fn theme_defaults_classic_and_normalizes_unknown() {
+        assert_eq!(Config::default().theme, "classic");
+        let mut c = Config { theme: "wizard".into(), ..Config::default() };
+        c.normalize();
+        assert_eq!(c.theme, "wizard"); // valid kept
+        let mut bad = Config { theme: "bogus".into(), ..Config::default() };
+        bad.normalize();
+        assert_eq!(bad.theme, "classic"); // unknown -> classic
     }
 
     #[test]
