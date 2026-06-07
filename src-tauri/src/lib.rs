@@ -18,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent};
 const COMPACT: (f64, f64) = (190.0, 56.0);
 const DETAILED: (f64, f64) = (270.0, 214.0);
 const SETTINGS: (f64, f64) = (300.0, 480.0);
+const ACTIVITY: (f64, f64) = (210.0, 160.0);
 const MARGIN: f64 = 12.0;
 const BOTTOM_PANEL_ALLOWANCE: f64 = 44.0; // leave room for a bottom taskbar
 
@@ -35,6 +36,8 @@ struct AppState {
     config: Mutex<Config>,
     latest: Mutex<UsageSnapshot>,
     anim_gen: AtomicU64,
+    activity: Mutex<activity::ActivityTracker>,
+    quota_samples: Mutex<std::collections::VecDeque<(chrono::DateTime<chrono::Local>, f64)>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -59,6 +62,8 @@ pub fn run() {
             config: Mutex::new(config),
             latest: Mutex::new(UsageSnapshot::default()),
             anim_gen: AtomicU64::new(0),
+            activity: Mutex::new(activity::ActivityTracker::new()),
+            quota_samples: Mutex::new(std::collections::VecDeque::new()),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -69,6 +74,7 @@ pub fn run() {
             hide_window,
             refresh_now,
             get_snapshot,
+            get_activity,
             set_autostart,
             set_statusline_optin,
         ])
@@ -104,6 +110,7 @@ pub fn run() {
             apply_mode(app.handle(), &mode, &corner);
 
             spawn_poller(app.handle().clone());
+            spawn_activity_ticker(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -131,7 +138,7 @@ fn set_mode(state: State<AppState>, app: AppHandle, mode: String) -> Result<(), 
     let corner = {
         let mut c = state.config.lock().unwrap();
         // "settings" is a transient view — don't persist it as the default mode.
-        if mode == "compact" || mode == "detailed" {
+        if mode == "compact" || mode == "detailed" || mode == "activity" {
             c.mode = mode.clone();
             let _ = c.save();
         }
@@ -168,6 +175,11 @@ fn hide_window(app: AppHandle) {
 #[tauri::command]
 fn get_snapshot(state: State<AppState>) -> UsageSnapshot {
     state.latest.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn get_activity(app: AppHandle) -> activity::LiveActivity {
+    build_activity(&app)
 }
 
 #[tauri::command]
@@ -215,6 +227,73 @@ fn spawn_poller(app: AppHandle) {
             poll_once(&app, &provider).await;
             let poll = app.state::<AppState>().config.lock().unwrap().poll_secs;
             tokio::time::sleep(std::time::Duration::from_secs(poll)).await;
+        }
+    });
+}
+
+fn parse_reset_secs(rfc3339: &str) -> Option<i64> {
+    let dt = chrono::DateTime::parse_from_rfc3339(rfc3339).ok()?;
+    let secs = (dt.with_timezone(&chrono::Local) - chrono::Local::now()).num_seconds();
+    if secs > 0 {
+        Some(secs)
+    } else {
+        None
+    }
+}
+
+/// Tail transcripts and assemble the current LiveActivity snapshot.
+fn build_activity(app: &AppHandle) -> activity::LiveActivity {
+    let now = chrono::Local::now();
+    let state = app.state::<AppState>();
+
+    let optin = state.config.lock().unwrap().statusline_optin;
+    let hint = if optin {
+        statusline::read_hint_fresh(15)
+    } else {
+        None
+    };
+    let hint_fresh = hint.is_some();
+    let force = hint
+        .as_ref()
+        .and_then(|h| h.transcript_path.clone())
+        .map(std::path::PathBuf::from);
+    let source = if hint_fresh { "statusline" } else { "jsonl" };
+
+    state.activity.lock().unwrap().tick(now, force);
+
+    let samples: Vec<_> = state.quota_samples.lock().unwrap().iter().cloned().collect();
+    let (five_pct, reset_secs) = {
+        let snap = state.latest.lock().unwrap();
+        let five = snap.quota.five_hour.clone();
+        (
+            five.as_ref().map(|w| w.utilization),
+            five.as_ref()
+                .and_then(|w| w.resets_at.as_deref())
+                .and_then(parse_reset_secs),
+        )
+    };
+
+    let result = state
+        .activity
+        .lock()
+        .unwrap()
+        .snapshot(now, hint_fresh, source, &samples, five_pct, reset_secs);
+    result
+}
+
+fn spawn_activity_ticker(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let show = app.state::<AppState>().config.lock().unwrap().show_activity;
+            if show {
+                let app2 = app.clone();
+                if let Ok(act) =
+                    tauri::async_runtime::spawn_blocking(move || build_activity(&app2)).await
+                {
+                    let _ = app.emit("activity-update", &act);
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
 }
@@ -273,6 +352,23 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
         .map_or(false, |e| e.contains("401") || e.contains("unauthorized"));
 
     *app.state::<AppState>().latest.lock().unwrap() = snap.clone();
+
+    // Sample the 5h utilization for the time-to-empty slope (keep ~last 10,
+    // drop anything older than 20 min so a slope never spans a window reset).
+    if let Some(w) = &snap.quota.five_hour {
+        let now = chrono::Local::now();
+        let app_state = app.state::<AppState>();
+        let mut s = app_state.quota_samples.lock().unwrap();
+        s.push_back((now, w.utilization));
+        let cutoff = now - chrono::Duration::minutes(20);
+        while s.front().map_or(false, |(t, _)| *t < cutoff) {
+            s.pop_front();
+        }
+        while s.len() > 10 {
+            s.pop_front();
+        }
+    }
+
     let _ = app.emit("usage-update", &snap);
     update_tray(app, &snap, warn, crit, stale);
 
@@ -359,6 +455,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "顯示 / 隱藏", true, None::<&str>)?;
     let compact = MenuItem::with_id(app, "compact", "精簡模式", true, None::<&str>)?;
     let detailed = MenuItem::with_id(app, "detailed", "詳細模式", true, None::<&str>)?;
+    let activity = MenuItem::with_id(app, "activity", "即時燒速", true, None::<&str>)?;
     let refresh = MenuItem::with_id(app, "refresh", "立即更新", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "設定…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "離開", true, None::<&str>)?;
@@ -367,7 +464,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &toggle, &sep1, &compact, &detailed, &refresh, &settings, &sep2, &quit,
+            &toggle, &sep1, &compact, &detailed, &activity, &refresh, &settings, &sep2, &quit,
         ],
     )?;
 
@@ -381,6 +478,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "toggle" => toggle_visibility(app),
             "compact" => apply_mode_persist(app, "compact"),
             "detailed" => apply_mode_persist(app, "detailed"),
+            "activity" => apply_mode_persist(app, "activity"),
             "refresh" => refresh_now(app.clone()),
             "settings" => {
                 if let Some(w) = app.get_webview_window("main") {
@@ -469,6 +567,7 @@ fn apply_mode(app: &AppHandle, mode: &str, corner: &str) {
     let (w, h) = match mode {
         "detailed" => DETAILED,
         "settings" => SETTINGS,
+        "activity" => ACTIVITY,
         _ => COMPACT,
     };
     // Re-assert frameless at runtime: some WMs (e.g. Muffin/Mutter on Cinnamon)
