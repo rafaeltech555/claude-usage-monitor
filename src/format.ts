@@ -50,9 +50,10 @@ export function fmtMinsToEmpty(mins: number | null, beatsReset: boolean): string
   if (beatsReset) return "✓ 重置前不會見底";
   if (mins == null || !isFinite(mins) || mins <= 0) return "";
   if (mins >= 60) {
-    const h = Math.floor(mins / 60);
-    const m = Math.round(mins % 60);
-    return `≈ ${h}時${m}分見底`;
+    // round to whole minutes first, then split, so a 59.5 remainder that rounds
+    // to 60 carries into the hour instead of showing "1時60分".
+    const total = Math.round(mins);
+    return `≈ ${Math.floor(total / 60)}時${total % 60}分見底`;
   }
   return `≈ ${Math.round(mins)} 分見底`;
 }

@@ -71,6 +71,7 @@ describe("fmtMinsToEmpty", () => {
   it("formats minutes and hours with the ≈ marker", () => {
     expect(fmtMinsToEmpty(25, false)).toBe("≈ 25 分見底");
     expect(fmtMinsToEmpty(95, false)).toBe("≈ 1時35分見底");
+    expect(fmtMinsToEmpty(119.6, false)).toBe("≈ 2時0分見底"); // carries, no "1時60分"
   });
   it("returns empty for unknown / non-positive", () => {
     expect(fmtMinsToEmpty(null, false)).toBe("");
