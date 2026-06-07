@@ -22,7 +22,7 @@
   - **奧術 HUD**:黑曜玻璃 + 金色 filigree + 青色 HUD 角標(Cinzel + Orbitron)。
   - **魔法羊皮紙**:哈利波特風老羊皮紙 + 墨水 + 火漆角飾 + 燭火餘燼脈動(IM Fell English + Cinzel Decorative)。
   - **魔導霓虹**:電路網格 + 青/洋紅霓虹 + 掃描線(Orbitron + Share Tech Mono)。
-- **釘選任何角落**：無邊框、永遠置頂,可拖到四角並自動記住位置。
+- **釘選任何角落（支援多螢幕）**：無邊框、永遠置頂,拖到四角自動吸附並記住位置;**多螢幕**下會記住你拖去的那台螢幕(該螢幕拔除時自動退回主螢幕)。設定可改「**自由位置**」,放在任何螢幕的任意位置都記住、不吸附角落。
 - **單一實例**：重複啟動(或開機自啟與手動啟動相撞)只會把既有視窗叫回前景,不會開出第二個托盤圖示。
 - **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。
 
@@ -60,7 +60,7 @@ npm test                                           # 前端 vitest：格式化 +
 
 ## 設定檔
 
-`~/.config/claude-usage-monitor/config.json`：模式、角落、更新間隔(≥180s)、警示/危險門檻、帳單日、透明度、開機啟動、火焰特效(`effects`)、警示特效(`alert_effects`)、顯示即時活動(`show_activity`)、渲染風格(`theme`:classic/arcane/wizard/neon)、statusline opt-in。
+`~/.config/claude-usage-monitor/config.json`：模式、角落、更新間隔(≥180s)、警示/危險門檻、帳單日、透明度、開機啟動、火焰特效(`effects`)、警示特效(`alert_effects`)、顯示即時活動(`show_activity`)、渲染風格(`theme`:classic/arcane/wizard/neon)、多螢幕位置記憶(`monitor`/`free_position`)、statusline opt-in。
 
 ## 桌面環境備註
 

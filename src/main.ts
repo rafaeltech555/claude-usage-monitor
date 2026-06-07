@@ -47,6 +47,10 @@ type Config = {
   alert_effects: boolean;
   show_activity: boolean;
   theme: string;
+  monitor: string;
+  free_position: boolean;
+  free_x: number;
+  free_y: number;
   renewal_day: number;
 };
 
@@ -135,6 +139,8 @@ function populateSettings() {
   (document.getElementById("s-alerts") as HTMLInputElement).checked = cfg.alert_effects;
   (document.getElementById("s-activity") as HTMLInputElement).checked = cfg.show_activity;
   (document.getElementById("s-theme") as HTMLSelectElement).value = cfg.theme;
+  (document.getElementById("s-free-pos") as HTMLInputElement).checked = cfg.free_position;
+  (document.getElementById("s-corner") as HTMLSelectElement).disabled = cfg.free_position;
   (document.getElementById("s-statusline") as HTMLInputElement).checked = cfg.statusline_optin;
   $("s-statusline-msg").hidden = true;
 }
@@ -157,7 +163,14 @@ function wireSettings() {
   $("s-done").addEventListener("click", closeSettings);
   on("s-corner", "change", (el) => {
     cfg.corner = el.value;
+    cfg.free_position = false; // picking a corner implies corner mode
     invoke("set_corner", { corner: cfg.corner });
+  });
+  on("s-free-pos", "change", (el) => {
+    const enabled = (el as HTMLInputElement).checked;
+    cfg.free_position = enabled;
+    (document.getElementById("s-corner") as HTMLSelectElement).disabled = enabled;
+    invoke("set_free_position", { enabled }); // backend-owned; not via saveCfg
   });
   on("s-mode", "change", (el) => {
     cfg.mode = el.value;
