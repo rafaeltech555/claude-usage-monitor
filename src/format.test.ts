@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fmtTokens, fmtCountdown, nextRenewal } from "./format";
+import { fmtRate, fmtMinsToEmpty } from "./format";
 
 describe("fmtTokens", () => {
   it("formats millions/thousands/units", () => {
@@ -52,5 +53,27 @@ describe("nextRenewal", () => {
     const r = nextRenewal(31, now)!;
     expect(r.getMonth()).toBe(8); // September
     expect(r.getDate()).toBe(30); // clamped
+  });
+});
+
+describe("fmtRate", () => {
+  it("abbreviates tok/min", () => {
+    expect(fmtRate(12400)).toBe("12.4k");
+    expect(fmtRate(940)).toBe("940");
+    expect(fmtRate(0)).toBe("0");
+  });
+});
+
+describe("fmtMinsToEmpty", () => {
+  it("prefers the beats-reset message", () => {
+    expect(fmtMinsToEmpty(120, true)).toBe("✓ 重置前不會見底");
+  });
+  it("formats minutes and hours with the ≈ marker", () => {
+    expect(fmtMinsToEmpty(25, false)).toBe("≈ 25 分見底");
+    expect(fmtMinsToEmpty(95, false)).toBe("≈ 1時35分見底");
+  });
+  it("returns empty for unknown / non-positive", () => {
+    expect(fmtMinsToEmpty(null, false)).toBe("");
+    expect(fmtMinsToEmpty(0, false)).toBe("");
   });
 });

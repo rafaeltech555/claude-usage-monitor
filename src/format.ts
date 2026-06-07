@@ -38,3 +38,21 @@ export function nextRenewal(day: number, now: Date = new Date()): Date | null {
   }
   return null;
 }
+
+// tokens/min, abbreviated like fmtTokens but rounded for small values.
+export function fmtRate(tpm: number): string {
+  if (tpm >= 1000) return (tpm / 1000).toFixed(1) + "k";
+  return String(Math.round(tpm));
+}
+
+// "5h empties in N" line. beatsReset wins; null/≤0 -> "" (caller hides it).
+export function fmtMinsToEmpty(mins: number | null, beatsReset: boolean): string {
+  if (beatsReset) return "✓ 重置前不會見底";
+  if (mins == null || !isFinite(mins) || mins <= 0) return "";
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60);
+    const m = Math.round(mins % 60);
+    return `≈ ${h}時${m}分見底`;
+  }
+  return `≈ ${Math.round(mins)} 分見底`;
+}
