@@ -54,6 +54,7 @@ let cfg: Config;
 let latestActivity: LiveActivity | null = null;
 let staleNow = false;
 let lastFitH = 0;
+let lastFitW = 0;
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -64,6 +65,7 @@ function setMode(mode: string) {
   const m = ["detailed", "settings", "activity"].includes(mode) ? mode : "compact";
   document.body.classList.add("mode-" + m);
   lastFitH = 0; // re-fit after any mode switch
+  lastFitW = 0;
 }
 
 // The detailed card has variable height (the live-activity block differs across
@@ -80,6 +82,27 @@ function fitDetailed() {
     lastFitH = h;
     invoke("fit_detailed", { height: h });
   }
+}
+
+// The compact pill has variable width (the live dot + burn rate, plus a
+// variable-length reset countdown). Measure natural width and re-pin.
+function fitCompact() {
+  if (!document.body.classList.contains("mode-compact")) return;
+  const pill = $("compact");
+  const prev = pill.style.width;
+  pill.style.width = "max-content";
+  const w = Math.ceil(pill.getBoundingClientRect().width) + 2;
+  pill.style.width = prev;
+  if (w > 0 && w !== lastFitW) {
+    lastFitW = w;
+    invoke("fit_compact", { width: w });
+  }
+}
+
+// Fit whichever mode is active (each helper no-ops unless its mode is showing).
+function fitWindow() {
+  fitDetailed();
+  fitCompact();
 }
 
 function applyOpacity(v: number) {
@@ -276,7 +299,7 @@ function render(s: Snapshot) {
     err.hidden = true;
   }
 
-  fitDetailed();
+  fitWindow();
 }
 
 function drawSpark(svg: SVGElement, w: number, data: number[]) {
@@ -315,7 +338,7 @@ function renderActivity(a: LiveActivity) {
     block.hidden = true;
     dot.hidden = true;
     rate.hidden = true;
-    fitDetailed(); // card shrank — refit the window
+    fitWindow(); // card shrank — refit the window
     return;
   }
 
@@ -359,8 +382,8 @@ function renderActivity(a: LiveActivity) {
     ($("act-spark") as unknown as SVGElement).innerHTML = "";
   }
 
-  // the detailed live-block height changes between idle/active — refit
-  fitDetailed();
+  // the detailed live-block height / pill width change between idle/active — refit
+  fitWindow();
 }
 
 // Reflect show_activity changes immediately (hide block, leave burn mode).
@@ -393,12 +416,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   // compact pill click -> expand
   $("compact").addEventListener("click", () => {
     setMode("detailed");
-    invoke("set_mode", { mode: "detailed" }).then(fitDetailed);
+    invoke("set_mode", { mode: "detailed" }).then(fitWindow);
   });
   $("btn-collapse").addEventListener("click", (e) => {
     e.stopPropagation();
     setMode("compact");
-    invoke("set_mode", { mode: "compact" });
+    invoke("set_mode", { mode: "compact" }).then(fitWindow);
   });
   $("btn-hide").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -412,7 +435,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-act-back").addEventListener("click", (e) => {
     e.stopPropagation();
     setMode("detailed");
-    invoke("set_mode", { mode: "detailed" }).then(fitDetailed);
+    invoke("set_mode", { mode: "detailed" }).then(fitWindow);
   });
   $("btn-act-hide").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -445,7 +468,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   // re-fit once layout/fonts have settled (first measure can be slightly short)
   requestAnimationFrame(() => {
     lastFitH = 0;
-    fitDetailed();
+    lastFitW = 0;
+    fitWindow();
   });
 
   setInterval(tick, 1000);

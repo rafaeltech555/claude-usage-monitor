@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent};
 const COMPACT: (f64, f64) = (190.0, 56.0);
 const DETAILED: (f64, f64) = (270.0, 214.0);
 const SETTINGS: (f64, f64) = (300.0, 480.0);
-const ACTIVITY: (f64, f64) = (210.0, 160.0);
+const ACTIVITY: (f64, f64) = (210.0, 208.0);
 const MARGIN: f64 = 12.0;
 const BOTTOM_PANEL_ALLOWANCE: f64 = 44.0; // leave room for a bottom taskbar
 
@@ -76,6 +76,7 @@ pub fn run() {
             get_snapshot,
             get_activity,
             fit_detailed,
+            fit_compact,
             set_autostart,
             set_statusline_optin,
         ])
@@ -153,6 +154,26 @@ fn fit_detailed(state: State<AppState>, app: AppHandle, height: f64) {
     let h = height.clamp(120.0, 600.0);
     let _ = win.set_size(tauri::LogicalSize::new(DETAILED.0, h));
     position_at_corner(&win, &corner, DETAILED.0, h);
+}
+
+/// Resize the compact pill to fit its measured content width (the live-activity
+/// dot + burn rate, plus a variable-length reset countdown, make it variable).
+/// Height stays fixed; the window is re-pinned to its corner.
+#[tauri::command]
+fn fit_compact(state: State<AppState>, app: AppHandle, width: f64) {
+    let (mode, corner) = {
+        let c = state.config.lock().unwrap();
+        (c.mode.clone(), c.corner.clone())
+    };
+    if mode != "compact" {
+        return;
+    }
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let w = width.clamp(150.0, 420.0);
+    let _ = win.set_size(tauri::LogicalSize::new(w, COMPACT.1));
+    position_at_corner(&win, &corner, w, COMPACT.1);
 }
 
 #[tauri::command]
