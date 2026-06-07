@@ -294,7 +294,7 @@ body.theme-arcane #detailed::after {
 body.theme-arcane #detailed::before { left: 5px; top: 5px; border-left: 2px solid var(--week); border-top: 2px solid var(--week); }
 body.theme-arcane #detailed::after  { right: 5px; bottom: 5px; border-right: 2px solid var(--week); border-bottom: 2px solid var(--week); }
 
-/* ---------- B · 符文黑曜 → 巫師羊皮紙 (wizard) ---------- */
+/* ---------- B · 魔法羊皮紙 (wizard) ---------- */
 body.theme-wizard {
   --panel:
     radial-gradient(120% 60% at 30% 10%, rgb(255 250 235 / var(--opacity)), transparent 55%),

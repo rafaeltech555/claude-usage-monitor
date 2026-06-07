@@ -20,7 +20,7 @@
 - **可選渲染風格（4 種）**：設定可切換主題,即時換皮、四畫面 + 系統匣雙環同步變色。內嵌字體(OFL)。
   - **經典**:原始 coral/blue 深色(預設)。
   - **奧術 HUD**:黑曜玻璃 + 金色 filigree + 青色 HUD 角標(Cinzel + Orbitron)。
-  - **符文黑曜**:哈利波特風老羊皮紙 + 墨水 + 火漆角飾 + 燭火餘燼脈動(IM Fell English + Cinzel Decorative)。
+  - **魔法羊皮紙**:哈利波特風老羊皮紙 + 墨水 + 火漆角飾 + 燭火餘燼脈動(IM Fell English + Cinzel Decorative)。
   - **魔導霓虹**:電路網格 + 青/洋紅霓虹 + 掃描線(Orbitron + Share Tech Mono)。
 - **釘選任何角落**：無邊框、永遠置頂,可拖到四角並自動記住位置。
 - **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。
