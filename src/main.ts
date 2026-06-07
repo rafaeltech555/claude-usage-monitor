@@ -53,6 +53,7 @@ let latest: Snapshot | null = null;
 let cfg: Config;
 let latestActivity: LiveActivity | null = null;
 let staleNow = false;
+let lastFitH = 0;
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -62,6 +63,23 @@ function setMode(mode: string) {
   document.body.classList.remove("mode-compact", "mode-detailed", "mode-settings", "mode-activity");
   const m = ["detailed", "settings", "activity"].includes(mode) ? mode : "compact";
   document.body.classList.add("mode-" + m);
+  lastFitH = 0; // re-fit after any mode switch
+}
+
+// The detailed card has variable height (the live-activity block differs across
+// off / idle / active), so the window must grow/shrink to fit its content.
+// Measure the card at natural height and ask the backend to resize + re-pin.
+function fitDetailed() {
+  if (!document.body.classList.contains("mode-detailed")) return;
+  const card = $("detailed");
+  const prev = card.style.height;
+  card.style.height = "auto";
+  const h = Math.ceil(card.getBoundingClientRect().height);
+  card.style.height = prev;
+  if (h > 0 && h !== lastFitH) {
+    lastFitH = h;
+    invoke("fit_detailed", { height: h });
+  }
 }
 
 function applyOpacity(v: number) {
@@ -257,6 +275,8 @@ function render(s: Snapshot) {
   } else {
     err.hidden = true;
   }
+
+  fitDetailed();
 }
 
 function drawSpark(svg: SVGElement, w: number, data: number[]) {
@@ -295,6 +315,7 @@ function renderActivity(a: LiveActivity) {
     block.hidden = true;
     dot.hidden = true;
     rate.hidden = true;
+    fitDetailed(); // card shrank — refit the window
     return;
   }
 
@@ -337,6 +358,9 @@ function renderActivity(a: LiveActivity) {
     $("act-empty").textContent = `最後活動 ${idleAgo(a.last_active_secs)}`;
     ($("act-spark") as unknown as SVGElement).innerHTML = "";
   }
+
+  // the detailed live-block height changes between idle/active — refit
+  fitDetailed();
 }
 
 // Reflect show_activity changes immediately (hide block, leave burn mode).
@@ -369,7 +393,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // compact pill click -> expand
   $("compact").addEventListener("click", () => {
     setMode("detailed");
-    invoke("set_mode", { mode: "detailed" });
+    invoke("set_mode", { mode: "detailed" }).then(fitDetailed);
   });
   $("btn-collapse").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -388,7 +412,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-act-back").addEventListener("click", (e) => {
     e.stopPropagation();
     setMode("detailed");
-    invoke("set_mode", { mode: "detailed" });
+    invoke("set_mode", { mode: "detailed" }).then(fitDetailed);
   });
   $("btn-act-hide").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -416,6 +440,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   invoke<LiveActivity>("get_activity").then((a) => {
     latestActivity = a;
     renderActivity(a);
+  });
+
+  // re-fit once layout/fonts have settled (first measure can be slightly short)
+  requestAnimationFrame(() => {
+    lastFitH = 0;
+    fitDetailed();
   });
 
   setInterval(tick, 1000);

@@ -75,6 +75,7 @@ pub fn run() {
             refresh_now,
             get_snapshot,
             get_activity,
+            fit_detailed,
             set_autostart,
             set_statusline_optin,
         ])
@@ -131,6 +132,27 @@ fn save_config(state: State<AppState>, cfg: Config) -> Result<(), String> {
     let mut c = state.config.lock().unwrap();
     *c = cfg;
     c.save()
+}
+
+/// Resize the detailed window to fit its measured content height (the live
+/// activity block makes the content variable: off / idle / active differ).
+/// Width stays fixed; the window is re-pinned to its corner so growth happens
+/// in the right direction.
+#[tauri::command]
+fn fit_detailed(state: State<AppState>, app: AppHandle, height: f64) {
+    let (mode, corner) = {
+        let c = state.config.lock().unwrap();
+        (c.mode.clone(), c.corner.clone())
+    };
+    if mode != "detailed" {
+        return;
+    }
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let h = height.clamp(120.0, 600.0);
+    let _ = win.set_size(tauri::LogicalSize::new(DETAILED.0, h));
+    position_at_corner(&win, &corner, DETAILED.0, h);
 }
 
 #[tauri::command]
