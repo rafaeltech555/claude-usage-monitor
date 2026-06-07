@@ -18,7 +18,7 @@ jobs:
           - platform: ubuntu-22.04
             args: "--bundles deb,appimage"
           - platform: macos-latest
-            args: "--target universal-apple-darwin"
+            args: "--target universal-apple-darwin --bundles app,dmg"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
