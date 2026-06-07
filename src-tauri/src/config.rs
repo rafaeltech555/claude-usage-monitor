@@ -8,7 +8,7 @@ const MIN_POLL_SECS: u64 = 180; // /api/oauth/usage throttles hard; never poll f
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// "compact" | "detailed"
+    /// "compact" | "detailed" | "activity"
     pub mode: String,
     /// Pinned corner: "tl" | "tr" | "bl" | "br"
     pub corner: String,
