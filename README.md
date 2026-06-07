@@ -64,4 +64,4 @@ npm test                                           # 前端 vitest：格式化 +
 - `/api/oauth/usage` 為非官方端點，未來可能變動（已抽象成可抽換的 `QuotaProvider`）。
 - 訂閱續訂日需手動填帳單日：OAuth token 無法存取帳單端點（`/api/oauth/profile` 的訂閱建立日 ≠ 實際帳單日）。
 - 目前僅在 Linux 建置/驗證；跨平台（Windows/macOS）程式碼大致可移植，待補 macOS Keychain token、視窗設定與 CI（GitHub Actions）。
-- 即時活動狀態（目前 session 正在燒多少）為未來擴充。
+- 即時活動的「見底時間」依 180s 取樣的 5h 百分比斜率估算，較粗、會跳，故標「≈」；session 累計採「首次完整讀 + 之後增量 tail」近似。
