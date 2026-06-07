@@ -53,6 +53,15 @@ pub fn run() {
     let want_autostart = config.autostart;
 
     tauri::Builder::default()
+        // Single-instance MUST be the first plugin. A second launch (re-running
+        // the binary, or autostart racing a manual launch) just surfaces the
+        // existing widget instead of spawning another tray icon + window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
