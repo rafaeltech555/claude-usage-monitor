@@ -26,6 +26,12 @@
 - **單一實例**：重複啟動(或開機自啟與手動啟動相撞)只會把既有視窗叫回前景,不會開出第二個托盤圖示。
 - **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。
 
+## 下載 / Releases
+
+每次推送 `v*` 版本標籤,GitHub Actions 會自動打包並發佈各平台安裝檔到 [Releases](https://github.com/rafaeltech555/claude-usage-monitor/releases):Linux `.deb` / `.AppImage`、macOS `.dmg`(universal,Intel + Apple Silicon)。
+
+- **macOS 為未簽章**:首次開啟請對 `.app` 按右鍵 → 開啟(或 `xattr -dr com.apple.quarantine /Applications/"Claude Usage Monitor.app"`)。
+
 ## 安裝
 
 ```bash
@@ -39,7 +45,7 @@ chmod +x "Claude Usage Monitor_0.1.0_amd64.AppImage"
 
 安裝後在應用程式選單搜尋「**Claude Usage Monitor**」即可開啟(可釘到 Dock/我的最愛);設定裡勾「開機自動啟動」後重開機會自動出現。
 
-需要已安裝並登入 Claude Code（讀取 `~/.claude/.credentials.json` 的 OAuth token；token 僅在記憶體使用、只透過 TLS 送往官方 `api.anthropic.com`，不寫入磁碟或 log）。
+需要已安裝並登入 Claude Code 取得 OAuth token(僅在記憶體使用、只透過 TLS 送往官方 `api.anthropic.com`,不寫入磁碟或 log)。token 來源:**Linux** 讀 `~/.claude/.credentials.json`;**macOS** 讀登入 Keychain(`Claude Code-credentials`);任一平台都可用環境變數 `CLAUDE_CODE_OAUTH_TOKEN` 覆寫。
 
 ## 從原始碼建置
 
@@ -71,5 +77,5 @@ npm test                                           # 前端 vitest：格式化 +
 
 - `/api/oauth/usage` 為非官方端點，未來可能變動（已抽象成可抽換的 `QuotaProvider`）。
 - 訂閱續訂日需手動填帳單日：OAuth token 無法存取帳單端點（`/api/oauth/profile` 的訂閱建立日 ≠ 實際帳單日）。
-- 目前僅在 Linux 建置/驗證；跨平台（Windows/macOS）程式碼大致可移植，待補 macOS Keychain token、視窗設定與 CI（GitHub Actions）。
+- macOS 已由 CI 打包(unsigned)且支援 Keychain token,但尚未在實機完整驗證(Keychain service 名稱 `Claude Code-credentials` 待真機確認);簽章/公證與 Windows 支援尚未做。
 - 即時活動的「見底時間」依 180s 取樣的 5h 百分比斜率估算，較粗、會跳，故標「≈」；session 累計採「首次完整讀 + 之後增量 tail」近似。

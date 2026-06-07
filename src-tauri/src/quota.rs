@@ -73,27 +73,53 @@ impl QuotaProvider for OAuthProvider {
     }
 }
 
-/// Read the OAuth access token, preferring the env override, then the
-/// credentials file. The token never leaves this process except as a TLS
-/// Authorization header to the official host.
+/// Extract the OAuth access token from a credentials JSON blob (the same shape
+/// whether it came from `~/.claude/.credentials.json` or the macOS Keychain).
+fn parse_access_token(blob: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(blob).ok()?;
+    v["claudeAiOauth"]["accessToken"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// macOS stores the Claude Code credentials in the login Keychain as a generic
+/// password (the value is the same JSON blob as the Linux credentials file).
+#[cfg(target_os = "macos")]
+fn read_token_macos() -> Option<String> {
+    // NOTE: verify this service name on a real Mac (Keychain Access → "Claude").
+    const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+    let out = std::process::Command::new("security")
+        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_access_token(String::from_utf8_lossy(&out.stdout).trim())
+}
+
+/// Read the OAuth access token: env override first, then (on macOS) the Keychain,
+/// then the credentials file. The token never leaves this process except as a
+/// TLS Authorization header to the official host.
 fn read_token() -> Result<String, String> {
     if let Ok(t) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
         if !t.is_empty() {
             return Ok(t);
         }
     }
+
+    #[cfg(target_os = "macos")]
+    if let Some(t) = read_token_macos() {
+        return Ok(t);
+    }
+
     let path = dirs::home_dir()
         .ok_or("no home dir")?
         .join(".claude/.credentials.json");
     let data = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read credentials: {e}"))?;
-    let v: serde_json::Value =
-        serde_json::from_str(&data).map_err(|e| format!("bad credentials json: {e}"))?;
-    v["claudeAiOauth"]["accessToken"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "no accessToken in credentials".into())
+    parse_access_token(&data).ok_or_else(|| "no accessToken in credentials".into())
 }
 
 /// Detect the installed Claude Code version once (for the required User-Agent),
@@ -118,6 +144,15 @@ fn claude_version() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_access_token_extracts_or_none() {
+        let ok = r#"{"claudeAiOauth":{"accessToken":"sk-abc","refreshToken":"r"}}"#;
+        assert_eq!(parse_access_token(ok).as_deref(), Some("sk-abc"));
+        assert!(parse_access_token(r#"{"claudeAiOauth":{"accessToken":""}}"#).is_none());
+        assert!(parse_access_token(r#"{"other":1}"#).is_none());
+        assert!(parse_access_token("not json").is_none());
+    }
 
     #[test]
     fn parses_usage_and_ignores_unknown_fields() {
