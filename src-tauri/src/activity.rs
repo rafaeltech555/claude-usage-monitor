@@ -97,11 +97,12 @@ pub fn mins_to_empty(samples: &[(DateTime<Local>, f64)], current_pct: f64) -> Op
 }
 
 /// True if the window resets before the projected empty time (i.e. you won't
-/// run out this window). `reset_secs` = seconds until the 5h window resets.
-pub fn beats_reset(mins_to_empty: Option<f64>, reset_secs: i64) -> bool {
-    match mins_to_empty {
-        Some(m) => m * 60.0 > reset_secs as f64,
-        None => false,
+/// run out this window). `reset_secs` = seconds until the 5h window resets;
+/// None (unknown reset time) yields false — never claim safety blindly.
+pub fn beats_reset(mins_to_empty: Option<f64>, reset_secs: Option<i64>) -> bool {
+    match (mins_to_empty, reset_secs) {
+        (Some(m), Some(r)) => m * 60.0 > r as f64,
+        _ => false,
     }
 }
 
@@ -210,14 +211,10 @@ impl ActivityTracker {
     }
 
     fn prune(&mut self, now: DateTime<Local>) {
+        // retain (not front-only pop): events from multiple files can interleave
+        // out of timestamp order, so a stale entry may sit behind a fresh one.
         let cutoff = now - chrono::Duration::minutes(SPARK_MINUTES as i64 + 1);
-        while let Some((t, _)) = self.events.front() {
-            if *t < cutoff {
-                self.events.pop_front();
-            } else {
-                break;
-            }
-        }
+        self.events.retain(|(t, _)| *t >= cutoff);
     }
 
     /// Build the snapshot. `quota_samples`/`five_pct`/`reset_secs` drive the
@@ -232,7 +229,11 @@ impl ActivityTracker {
         reset_secs: Option<i64>,
     ) -> LiveActivity {
         let ev: Vec<(DateTime<Local>, u64)> = self.events.iter().cloned().collect();
-        let last_ts = ev.iter().map(|(t, _)| *t).max();
+        let event_last = ev.iter().map(|(t, _)| *t).max();
+        let file_last = self.files.values().filter_map(|f| f.last_ts).max();
+        // Events are pruned to ~11 min, but per-file last_ts is unbounded — use the
+        // later of the two so the idle "last active N min ago" stays accurate.
+        let last_ts = event_last.max(file_last);
         let active = is_active(last_ts, now, hint_fresh);
         let burn_tpm = burn_rate(&ev, now, RATE_WINDOW_SECS);
         let spark = spark_buckets(&ev, now, SPARK_MINUTES);
@@ -251,7 +252,7 @@ impl ActivityTracker {
         } else {
             None
         };
-        let beats = beats_reset(mins, reset_secs.unwrap_or(0));
+        let beats = beats_reset(mins, reset_secs);
         LiveActivity {
             active,
             burn_tpm,
@@ -336,9 +337,10 @@ mod tests {
 
     #[test]
     fn beats_reset_compares_minutes_to_seconds() {
-        assert!(beats_reset(Some(40.0), 30 * 60)); // empties in 40min, resets in 30min
-        assert!(!beats_reset(Some(20.0), 30 * 60)); // empties first
-        assert!(!beats_reset(None, 30 * 60));
+        assert!(beats_reset(Some(40.0), Some(30 * 60))); // empties in 40min, resets in 30min
+        assert!(!beats_reset(Some(20.0), Some(30 * 60))); // empties first
+        assert!(!beats_reset(None, Some(30 * 60)));
+        assert!(!beats_reset(Some(40.0), None)); // unknown reset -> not safe
     }
 
     #[test]
@@ -382,6 +384,32 @@ mod tests {
         tr.tick_in(&base, now, None);
         let snap2 = tr.snapshot(now, false, "jsonl", &[], None, None);
         assert_eq!(snap2.session_tokens, 320); // +20, not double-counted
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn last_active_secs_falls_back_to_file_when_events_pruned() {
+        let now = Local::now();
+        // A line ~15 min ago: beyond the events ring (SPARK_MINUTES+1=11), so it is
+        // NOT pushed to events, but the file's last_ts records it.
+        let stamp = (now - chrono::Duration::minutes(15)).to_rfc3339();
+        let base = std::env::temp_dir().join(format!("cum-act-idle-{}", std::process::id()));
+        let proj = base.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        let line = format!(
+            r#"{{"type":"assistant","timestamp":"{}","message":{{"usage":{{"input_tokens":10,"output_tokens":10}}}}}}"#,
+            stamp
+        );
+        std::fs::write(proj.join("s.jsonl"), format!("{}\n", line)).unwrap();
+
+        let mut tr = ActivityTracker::new();
+        tr.tick_in(&base, now, None);
+        let snap = tr.snapshot(now, false, "jsonl", &[], None, None);
+
+        assert!(!snap.active); // 15 min ago is idle
+        // last_active_secs should reflect ~15 min (900s), NOT 0
+        assert!(snap.last_active_secs >= 890 && snap.last_active_secs <= 910);
 
         std::fs::remove_dir_all(&base).ok();
     }

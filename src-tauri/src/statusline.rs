@@ -93,6 +93,9 @@ pub fn run_hook() {
     let hint = parse_hint(&v);
     if let Ok(json) = serde_json::to_string(&hint) {
         let p = hint_path();
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
         if std::fs::write(&p, json).is_ok() {
             set_owner_only(&p);
         }
