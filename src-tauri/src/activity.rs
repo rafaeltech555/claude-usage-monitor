@@ -54,6 +54,54 @@ pub fn spark_buckets(
     buckets
 }
 
+/// Active if a hint says so, else if the last token landed within ACTIVE_WINDOW.
+pub fn is_active(last_ts: Option<DateTime<Local>>, now: DateTime<Local>, hint_fresh: bool) -> bool {
+    if hint_fresh {
+        return true;
+    }
+    match last_ts {
+        Some(t) => (now - t).num_seconds() <= ACTIVE_WINDOW_SECS,
+        None => false,
+    }
+}
+
+/// Estimate minutes until the 5h window reaches 100%, via a least-squares fit of
+/// `(time, used_%)` samples. None if <2 samples, non-positive slope, or full.
+pub fn mins_to_empty(samples: &[(DateTime<Local>, f64)], current_pct: f64) -> Option<f64> {
+    if samples.len() < 2 || current_pct >= 100.0 {
+        return None;
+    }
+    let t0 = samples[0].0;
+    let xs: Vec<f64> = samples
+        .iter()
+        .map(|(t, _)| (*t - t0).num_seconds() as f64 / 60.0)
+        .collect();
+    let ys: Vec<f64> = samples.iter().map(|(_, p)| *p).collect();
+    let n = xs.len() as f64;
+    let sx: f64 = xs.iter().sum();
+    let sy: f64 = ys.iter().sum();
+    let sxx: f64 = xs.iter().map(|x| x * x).sum();
+    let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| x * y).sum();
+    let denom = n * sxx - sx * sx;
+    if denom == 0.0 {
+        return None;
+    }
+    let slope = (n * sxy - sx * sy) / denom; // %/min
+    if slope <= 0.0 {
+        return None;
+    }
+    Some((100.0 - current_pct) / slope)
+}
+
+/// True if the window resets before the projected empty time (i.e. you won't
+/// run out this window). `reset_secs` = seconds until the 5h window resets.
+pub fn beats_reset(mins_to_empty: Option<f64>, reset_secs: i64) -> bool {
+    match mins_to_empty {
+        Some(m) => m * 60.0 > reset_secs as f64,
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +135,40 @@ mod tests {
         assert_eq!(b[SPARK_MINUTES - 1], 5.0);
         assert_eq!(b[SPARK_MINUTES - 2], 7.0);
         assert_eq!(b[0], 0.0);
+    }
+
+    #[test]
+    fn is_active_by_silence_or_hint() {
+        let now = Local::now();
+        assert!(is_active(Some(t(60, now)), now, false)); // recent
+        assert!(!is_active(Some(t(300, now)), now, false)); // too old
+        assert!(is_active(Some(t(300, now)), now, true)); // hint overrides
+        assert!(!is_active(None, now, false)); // never seen
+    }
+
+    #[test]
+    fn mins_to_empty_linear_fit() {
+        let now = Local::now();
+        // 2%/min slope: 40% at t-10min, 60% now
+        let samples = vec![(t(600, now), 40.0), (now, 60.0)];
+        let m = mins_to_empty(&samples, 60.0).unwrap();
+        assert!((m - 20.0).abs() < 1e-6); // (100-60)/2 = 20 min
+    }
+
+    #[test]
+    fn mins_to_empty_none_when_flat_or_sparse() {
+        let now = Local::now();
+        assert!(mins_to_empty(&[(now, 50.0)], 50.0).is_none()); // <2 samples
+        let flat = vec![(t(600, now), 50.0), (now, 50.0)];
+        assert!(mins_to_empty(&flat, 50.0).is_none()); // zero slope
+        let full = vec![(t(600, now), 90.0), (now, 100.0)];
+        assert!(mins_to_empty(&full, 100.0).is_none()); // already full
+    }
+
+    #[test]
+    fn beats_reset_compares_minutes_to_seconds() {
+        assert!(beats_reset(Some(40.0), 30 * 60)); // empties in 40min, resets in 30min
+        assert!(!beats_reset(Some(20.0), 30 * 60)); // empties first
+        assert!(!beats_reset(None, 30 * 60));
     }
 }
