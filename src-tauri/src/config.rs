@@ -36,6 +36,13 @@ pub struct Config {
     pub show_activity: bool,
     /// Render theme: "classic" | "arcane" | "wizard" | "neon".
     pub theme: String,
+    /// Remembered monitor name for corner mode ("" = primary/auto).
+    pub monitor: String,
+    /// Free placement: remember an exact position instead of snapping to a corner.
+    pub free_position: bool,
+    /// Saved outer position (physical px) used when free_position is on (0,0 = unset).
+    pub free_x: i32,
+    pub free_y: i32,
 }
 
 impl Default for Config {
@@ -54,6 +61,10 @@ impl Default for Config {
             renewal_day: 0,
             show_activity: true,
             theme: "classic".into(),
+            monitor: String::new(),
+            free_position: false,
+            free_x: 0,
+            free_y: 0,
         }
     }
 }
@@ -144,6 +155,14 @@ mod tests {
         assert_eq!(c.poll_secs, 300);
         assert_eq!(c.mode, "detailed");
         assert_eq!(c.corner, "bl");
+    }
+
+    #[test]
+    fn placement_defaults_to_corner_mode() {
+        let c = Config::default();
+        assert!(!c.free_position);
+        assert_eq!(c.monitor, "");
+        assert_eq!((c.free_x, c.free_y), (0, 0));
     }
 
     #[test]

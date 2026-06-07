@@ -87,12 +87,15 @@ pub fn run() {
             redraw_tray,
             fit_detailed,
             fit_compact,
+            set_free_position,
             set_autostart,
             set_statusline_optin,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Moved(_) = event {
-                snap_to_nearest_corner(window);
+                if let Some(w) = window.get_webview_window("main") {
+                    snap_to_nearest_corner(&w);
+                }
             }
         })
         .setup(move |app| {
@@ -103,11 +106,11 @@ pub fn run() {
                 linux_undecorate(&win);
             }
 
-            // Apply persisted mode/corner to the window.
-            let (mode, corner) = {
+            // Apply the persisted mode/placement to the window.
+            let mode = {
                 let state = app.state::<AppState>();
-                let c = state.config.lock().unwrap();
-                (c.mode.clone(), c.corner.clone())
+                let m = state.config.lock().unwrap().mode.clone();
+                m
             };
 
             // Sync OS autostart to the saved preference.
@@ -119,7 +122,7 @@ pub fn run() {
 
             // Size, position, and show the window (it starts hidden so the
             // pre-map set_decorations above takes effect on strict WMs).
-            apply_mode(app.handle(), &mode, &corner);
+            apply_mode(app.handle(), &mode);
 
             spawn_poller(app.handle().clone());
             spawn_activity_ticker(app.handle().clone());
@@ -141,7 +144,15 @@ fn get_config(state: State<AppState>) -> Config {
 #[tauri::command]
 fn save_config(state: State<AppState>, cfg: Config) -> Result<(), String> {
     let mut c = state.config.lock().unwrap();
-    *c = cfg;
+    // Placement is backend-owned (updated by drag / set_corner / set_free_position).
+    // Preserve it so a stale frontend object can't clobber the live position.
+    let mut next = cfg;
+    next.corner = c.corner.clone();
+    next.monitor = c.monitor.clone();
+    next.free_position = c.free_position;
+    next.free_x = c.free_x;
+    next.free_y = c.free_y;
+    *c = next;
     c.save()
 }
 
@@ -151,11 +162,7 @@ fn save_config(state: State<AppState>, cfg: Config) -> Result<(), String> {
 /// in the right direction.
 #[tauri::command]
 fn fit_detailed(state: State<AppState>, app: AppHandle, height: f64) {
-    let (mode, corner) = {
-        let c = state.config.lock().unwrap();
-        (c.mode.clone(), c.corner.clone())
-    };
-    if mode != "detailed" {
+    if state.config.lock().unwrap().mode != "detailed" {
         return;
     }
     let Some(win) = app.get_webview_window("main") else {
@@ -163,7 +170,7 @@ fn fit_detailed(state: State<AppState>, app: AppHandle, height: f64) {
     };
     let h = height.clamp(120.0, 600.0);
     let _ = win.set_size(tauri::LogicalSize::new(DETAILED.0, h));
-    position_at_corner(&win, &corner, DETAILED.0, h);
+    place_window(&app, &win, DETAILED.0, h);
 }
 
 /// Resize the compact pill to fit its measured content width (the live-activity
@@ -171,11 +178,7 @@ fn fit_detailed(state: State<AppState>, app: AppHandle, height: f64) {
 /// Height stays fixed; the window is re-pinned to its corner.
 #[tauri::command]
 fn fit_compact(state: State<AppState>, app: AppHandle, width: f64) {
-    let (mode, corner) = {
-        let c = state.config.lock().unwrap();
-        (c.mode.clone(), c.corner.clone())
-    };
-    if mode != "compact" {
+    if state.config.lock().unwrap().mode != "compact" {
         return;
     }
     let Some(win) = app.get_webview_window("main") else {
@@ -183,21 +186,20 @@ fn fit_compact(state: State<AppState>, app: AppHandle, width: f64) {
     };
     let w = width.clamp(150.0, 420.0);
     let _ = win.set_size(tauri::LogicalSize::new(w, COMPACT.1));
-    position_at_corner(&win, &corner, w, COMPACT.1);
+    place_window(&app, &win, w, COMPACT.1);
 }
 
 #[tauri::command]
 fn set_mode(state: State<AppState>, app: AppHandle, mode: String) -> Result<(), String> {
-    let corner = {
+    {
         let mut c = state.config.lock().unwrap();
         // "settings" is a transient view — don't persist it as the default mode.
         if mode == "compact" || mode == "detailed" || mode == "activity" {
             c.mode = mode.clone();
             let _ = c.save();
         }
-        c.corner.clone()
-    };
-    apply_mode(&app, &mode, &corner);
+    }
+    apply_mode(&app, &mode);
     Ok(())
 }
 
@@ -205,11 +207,47 @@ fn set_mode(state: State<AppState>, app: AppHandle, mode: String) -> Result<(), 
 fn set_corner(state: State<AppState>, app: AppHandle, corner: String) -> Result<(), String> {
     let mode = {
         let mut c = state.config.lock().unwrap();
-        c.corner = corner.clone();
+        c.corner = corner;
+        c.free_position = false; // picking a corner implies corner mode
         c.save()?;
         c.mode.clone()
     };
-    apply_mode(&app, &mode, &corner);
+    apply_mode(&app, &mode);
+    Ok(())
+}
+
+/// Toggle free placement. Enabling captures the current position so the widget
+/// stays put; disabling snaps back to the nearest corner of the current monitor.
+#[tauri::command]
+fn set_free_position(state: State<AppState>, app: AppHandle, enabled: bool) -> Result<(), String> {
+    let win = app.get_webview_window("main");
+    if enabled {
+        let mut c = state.config.lock().unwrap();
+        c.free_position = true;
+        if let Some(w) = &win {
+            if let Ok(pos) = w.outer_position() {
+                c.free_x = pos.x;
+                c.free_y = pos.y;
+            }
+        }
+        c.save()?;
+    } else {
+        let cm = win.as_ref().and_then(corner_and_monitor);
+        let mut c = state.config.lock().unwrap();
+        c.free_position = false;
+        if let Some((corner, monitor)) = cm {
+            c.corner = corner;
+            c.monitor = monitor;
+        }
+        c.save()?;
+    }
+    // Re-place at the current window size (free → exact pos; corner → snap).
+    if let Some(w) = &win {
+        if let Ok(sz) = w.inner_size() {
+            let sf = w.scale_factor().unwrap_or(1.0);
+            place_window(&app, w, sz.width as f64 / sf, sz.height as f64 / sf);
+        }
+    }
     Ok(())
 }
 
@@ -632,20 +670,19 @@ fn update_tray(app: &AppHandle, snap: &UsageSnapshot, warn: f64, crit: f64, stal
 // ---------------------------------------------------------------------------
 
 fn apply_mode_persist(app: &AppHandle, mode: &str) {
-    let corner = {
+    {
         let state = app.state::<AppState>();
         let mut c = state.config.lock().unwrap();
         c.mode = mode.to_string();
         let _ = c.save();
-        c.corner.clone()
-    };
-    apply_mode(app, mode, &corner);
+    }
+    apply_mode(app, mode);
     // Tray switches the window size in Rust, but the webview decides which view
     // to render from its body class — tell it to switch (and re-fit).
     let _ = app.emit("set-mode", mode);
 }
 
-fn apply_mode(app: &AppHandle, mode: &str, corner: &str) {
+fn apply_mode(app: &AppHandle, mode: &str) {
     let Some(win) = app.get_webview_window("main") else { return };
     let (w, h) = match mode {
         "detailed" => DETAILED,
@@ -660,21 +697,59 @@ fn apply_mode(app: &AppHandle, mode: &str, corner: &str) {
     let _ = win.set_shadow(false);
     let _ = win.set_always_on_top(true);
     let _ = win.set_size(tauri::LogicalSize::new(w, h));
-    position_at_corner(&win, corner, w, h);
+    place_window(app, &win, w, h);
     let _ = win.show();
 }
 
-fn position_at_corner(win: &WebviewWindow, corner: &str, w: f64, h: f64) {
-    // Default to the primary monitor (the user's main screen) rather than
-    // current_monitor(), which on multi-monitor setups can be a secondary
-    // HiDPI panel and push the widget off-screen. Work entirely in physical
-    // pixels to avoid logical<->physical double-scaling.
-    let mon = win
-        .primary_monitor()
+/// The monitor to place on: the remembered one (by name) when present, else the
+/// primary, else the current — so a dragged-to display is honored but an
+/// unplugged one falls back gracefully.
+fn target_monitor(win: &WebviewWindow, name: &str) -> Option<tauri::Monitor> {
+    if !name.is_empty() {
+        if let Ok(mons) = win.available_monitors() {
+            if let Some(m) = mons
+                .into_iter()
+                .find(|m| m.name().map(|s| s.as_str()) == Some(name))
+            {
+                return Some(m);
+            }
+        }
+    }
+    win.primary_monitor()
         .ok()
         .flatten()
-        .or_else(|| win.current_monitor().ok().flatten());
-    let Some(mon) = mon else { return };
+        .or_else(|| win.current_monitor().ok().flatten())
+}
+
+/// True if the physical point (x, y) lies within some connected monitor.
+fn point_on_a_monitor(win: &WebviewWindow, x: i32, y: i32) -> bool {
+    let Ok(mons) = win.available_monitors() else { return false };
+    mons.iter().any(|m| {
+        let p = m.position();
+        let s = m.size();
+        x >= p.x && x < p.x + s.width as i32 && y >= p.y && y < p.y + s.height as i32
+    })
+}
+
+/// Reposition the window per the saved placement: a remembered exact position
+/// (free mode, still on-screen) or the pinned corner of the remembered monitor.
+fn place_window(app: &AppHandle, win: &WebviewWindow, w: f64, h: f64) {
+    let (free, fx, fy, corner, monitor) = {
+        let state = app.state::<AppState>();
+        let c = state.config.lock().unwrap();
+        (c.free_position, c.free_x, c.free_y, c.corner.clone(), c.monitor.clone())
+    };
+    if free && (fx != 0 || fy != 0) && point_on_a_monitor(win, fx, fy) {
+        let _ = win.set_position(tauri::PhysicalPosition::new(fx, fy));
+    } else {
+        position_at_corner(win, &corner, &monitor, w, h);
+    }
+}
+
+fn position_at_corner(win: &WebviewWindow, corner: &str, monitor: &str, w: f64, h: f64) {
+    // Place on the remembered monitor (falls back to primary/current). Work
+    // entirely in physical pixels to avoid logical<->physical double-scaling.
+    let Some(mon) = target_monitor(win, monitor) else { return };
 
     let scale = mon.scale_factor();
     let ms = mon.size(); // physical
@@ -695,11 +770,11 @@ fn position_at_corner(win: &WebviewWindow, corner: &str, w: f64, h: f64) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// On manual drag, remember which corner the widget ended up nearest to.
-fn snap_to_nearest_corner(win: &tauri::Window) {
-    let Ok(pos) = win.outer_position() else { return };
-    let Ok(size) = win.outer_size() else { return };
-    let Ok(Some(mon)) = win.current_monitor() else { return };
+/// Derive (corner, monitor_name) from the window's current center position.
+fn corner_and_monitor(win: &WebviewWindow) -> Option<(String, String)> {
+    let pos = win.outer_position().ok()?;
+    let size = win.outer_size().ok()?;
+    let mon = win.current_monitor().ok().flatten()?;
     let ms = mon.size();
     let mp = mon.position();
 
@@ -714,12 +789,31 @@ fn snap_to_nearest_corner(win: &tauri::Window) {
         (true, false) => "bl",
         (false, false) => "br",
     };
+    Some((corner.to_string(), mon.name().cloned().unwrap_or_default()))
+}
 
+/// On manual drag: in free mode remember the exact position; otherwise snap to
+/// the nearest corner of the current monitor and remember which monitor.
+fn snap_to_nearest_corner(win: &WebviewWindow) {
     let app = win.app_handle();
     let state = app.state::<AppState>();
+
+    if state.config.lock().unwrap().free_position {
+        let Ok(pos) = win.outer_position() else { return };
+        let mut c = state.config.lock().unwrap();
+        if c.free_x != pos.x || c.free_y != pos.y {
+            c.free_x = pos.x;
+            c.free_y = pos.y;
+            let _ = c.save();
+        }
+        return;
+    }
+
+    let Some((corner, monitor)) = corner_and_monitor(win) else { return };
     let mut c = state.config.lock().unwrap();
-    if c.corner != corner {
-        c.corner = corner.to_string();
+    if c.corner != corner || c.monitor != monitor {
+        c.corner = corner;
+        c.monitor = monitor;
         let _ = c.save();
     }
 }
