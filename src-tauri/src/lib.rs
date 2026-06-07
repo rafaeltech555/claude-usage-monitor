@@ -603,6 +603,9 @@ fn apply_mode_persist(app: &AppHandle, mode: &str) {
         c.corner.clone()
     };
     apply_mode(app, mode, &corner);
+    // Tray switches the window size in Rust, but the webview decides which view
+    // to render from its body class — tell it to switch (and re-fit).
+    let _ = app.emit("set-mode", mode);
 }
 
 fn apply_mode(app: &AppHandle, mode: &str, corner: &str) {

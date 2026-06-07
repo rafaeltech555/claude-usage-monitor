@@ -137,7 +137,7 @@ function openSettings() {
 
 function closeSettings() {
   setMode(cfg.mode);
-  invoke("set_mode", { mode: cfg.mode });
+  invoke("set_mode", { mode: cfg.mode }).then(fitWindow);
 }
 
 function wireSettings() {
@@ -453,6 +453,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   await listen("go-settings", () => openSettings());
+
+  // tray switched the mode in the backend — sync the view + re-fit the window
+  await listen<string>("set-mode", (ev) => {
+    const mode = ev.payload;
+    if (["compact", "detailed", "activity"].includes(mode)) cfg.mode = mode;
+    setMode(mode);
+    requestAnimationFrame(fitWindow);
+  });
 
   // show whatever we have, then force a fresh poll
   const snap = await invoke<Snapshot>("get_snapshot");
