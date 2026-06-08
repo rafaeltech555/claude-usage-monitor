@@ -124,6 +124,20 @@ body.mode-activity #activity { display: flex; }
 .card-frozen .frozen-icon { font-size: 30px; line-height: 1; }
 .card-frozen .frozen-title { font-weight: 700; font-size: 14px; color: var(--ice); }
 .card-frozen .frozen-sub { font-size: 11px; color: var(--muted); line-height: 1.4; }
+.frozen-btn {
+  margin-top: 6px;
+  padding: 5px 12px;
+  background: rgba(143, 196, 232, 0.14); /* --ice tint */
+  border: 1px solid var(--ice);
+  border-radius: 8px;
+  color: var(--ice);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.frozen-btn:hover { background: rgba(143, 196, 232, 0.26); }
+.frozen-btn:disabled { opacity: 0.55; cursor: default; }
+.frozen-hint { font-size: 10px; color: var(--muted); line-height: 1.3; }
 
 .foot {
   display: flex;
@@ -176,6 +190,34 @@ body.stale #detailed { animation: frostPulse 2.4s ease-in-out infinite; }
 @keyframes frostPulse {
   0%, 100% { box-shadow: inset 0 0 0 rgba(143, 196, 232, 0); }
   50% { box-shadow: inset 0 0 16px rgba(143, 196, 232, 0.5); }
+}
+
+/* thaw: one-shot melt when the token recovers (frozen -> live). Driven by the
+   transient `.thawing` class added in main.ts. The overlay is absolutely
+   positioned (out of flow, so it never affects fitWindow's measurement) and is
+   clipped by the host's scoped overflow so it appears to drip off the bottom. */
+#compact, #detailed { position: relative; }
+#compact.thawing, #detailed.thawing { overflow: hidden; }
+#compact.thawing::after,
+#detailed.thawing::after {
+  content: "❄";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 6px;
+  font-size: 26px;
+  color: var(--ice);
+  background: linear-gradient(180deg, rgba(143, 196, 232, 0.45), rgba(143, 196, 232, 0.12));
+  border-radius: inherit;
+  pointer-events: none;
+  animation: thaw 1.1s ease-in forwards;
+}
+@keyframes thaw {
+  0%   { transform: translateY(0);    opacity: 1; filter: brightness(1.4); } /* flash */
+  15%  { transform: translateY(0);    opacity: 1; filter: brightness(1.7); } /* peak flash */
+  100% { transform: translateY(100%); opacity: 0; filter: brightness(1);   } /* drip + dissolve */
 }
 
 /* threshold alert pulse (toggleable). Window is sized to content so outer
