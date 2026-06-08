@@ -331,10 +331,23 @@ fn refresh_now(app: AppHandle) {
 fn spawn_poller(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let provider = OAuthProvider;
+        let mut rl_steps: u32 = 0;
         loop {
-            poll_once(&app, &provider).await;
-            let poll = app.state::<AppState>().config.lock().unwrap().poll_secs;
-            tokio::time::sleep(std::time::Duration::from_secs(poll)).await;
+            let result = poll_once(&app, &provider).await;
+            let base = app.state::<AppState>().config.lock().unwrap().poll_secs;
+            let sleep = match result {
+                PollResult::RateLimited => {
+                    rl_steps += 1;
+                    let s = backoff_for(base, rl_steps);
+                    eprintln!("[poll] rate limited — backing off {s}s (step {rl_steps})");
+                    s
+                }
+                _ => {
+                    rl_steps = 0;
+                    base
+                }
+            };
+            tokio::time::sleep(std::time::Duration::from_secs(sleep)).await;
         }
     });
 }
@@ -406,7 +419,24 @@ fn spawn_activity_ticker(app: AppHandle) {
     });
 }
 
-async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
+/// Outcome of a single poll, used by the poller to decide its next sleep.
+#[derive(Debug, PartialEq, Eq)]
+enum PollResult {
+    Ok,
+    RateLimited,
+    Err,
+}
+
+/// Next sleep for the poller: normal cadence, but on consecutive rate-limits
+/// double the wait (180 → 360 → 720 → 1440 → cap 1800s) so we stop hammering an
+/// endpoint that's already saturated — e.g. when Claude Code itself is polling
+/// the same per-token usage budget. Resets to `base` on any non-429 outcome.
+fn backoff_for(base: u64, steps: u32) -> u64 {
+    let mult = 1u64 << steps.min(5);
+    base.saturating_mul(mult).min(1800)
+}
+
+async fn poll_once(app: &AppHandle, provider: &OAuthProvider) -> PollResult {
     let (warn, crit, optin, effects, alert_effects) = {
         let state = app.state::<AppState>();
         let c = state.config.lock().unwrap();
@@ -492,6 +522,12 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) {
         spawn_alert(app.clone(), gen, five_u, seven_u, warn, crit);
     } else if !stale && effects && (flame_left || flame_right) {
         spawn_flame(app.clone(), gen, &snap.quota, warn, crit, flame_left, flame_right);
+    }
+
+    match &snap.error {
+        None => PollResult::Ok,
+        Some(e) if e.contains("429") || e.contains("rate limit") => PollResult::RateLimited,
+        Some(_) => PollResult::Err,
     }
 }
 
@@ -588,6 +624,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let builder = TrayIconBuilder::with_id("main")
         .icon(icon::gauge_dual(Some(0.0), Some(0.0), 75.0, 90.0, lc, rc))
         .icon_as_template(false)
+        // Seed a text title so the status item always has non-zero width and is
+        // findable in the menu bar even if the custom RGBA icon fails to render
+        // (observed on macOS: item created without error but nothing visible).
+        // update_tray() overwrites this with the live burn rate on first poll.
+        .title("Claude")
         .tooltip("Claude Usage Monitor")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -616,8 +657,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 toggle_visibility(tray.app_handle());
             }
         });
-    builder.build(app)?;
-    Ok(())
+    match builder.build(app) {
+        Ok(_) => {
+            eprintln!("[tray] status item built ok");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("[tray] build FAILED: {e}");
+            Err(e)
+        }
+    }
 }
 
 fn update_tray(app: &AppHandle, snap: &UsageSnapshot, warn: f64, crit: f64, stale: bool) {
@@ -632,12 +681,16 @@ fn update_tray(app: &AppHandle, snap: &UsageSnapshot, warn: f64, crit: f64, stal
     } else {
         icon::gauge_dual(five_u, seven_u, warn, crit, lc, rc)
     };
-    let _ = tray.set_icon(Some(icon));
-    let _ = tray.set_title(Some(format!(
+    if let Err(e) = tray.set_icon(Some(icon)) {
+        eprintln!("[tray] set_icon err: {e}");
+    }
+    if let Err(e) = tray.set_title(Some(format!(
         "{:.0}/{:.0}%",
         five_u.unwrap_or(0.0),
         seven_u.unwrap_or(0.0)
-    )));
+    ))) {
+        eprintln!("[tray] set_title err: {e}");
+    }
 
     if stale {
         let _ = tray.set_tooltip(Some(
@@ -839,5 +892,22 @@ fn toggle_visibility(app: &AppHandle) {
             let _ = w.show();
             let _ = w.set_focus();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_doubles_then_caps() {
+        assert_eq!(backoff_for(180, 0), 180);
+        assert_eq!(backoff_for(180, 1), 360);
+        assert_eq!(backoff_for(180, 2), 720);
+        assert_eq!(backoff_for(180, 3), 1440);
+        // 180*16 = 2880 -> capped at 1800
+        assert_eq!(backoff_for(180, 4), 1800);
+        // very large step is clamped, never overflows
+        assert_eq!(backoff_for(180, 99), 1800);
     }
 }

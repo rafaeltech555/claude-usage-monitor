@@ -503,6 +503,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     setMode("activity");
     invoke("set_mode", { mode: "activity" });
   });
+  // In-widget entry to settings — the tray menu used to be the only way in, which
+  // left macOS users stranded whenever the tray icon failed to appear.
+  $("btn-settings").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openSettings();
+  });
   $("btn-act-back").addEventListener("click", (e) => {
     e.stopPropagation();
     setMode("detailed");
