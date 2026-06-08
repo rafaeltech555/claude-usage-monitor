@@ -54,10 +54,14 @@ fn settings_path() -> Option<PathBuf> {
 }
 
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
-    let u = v.get("used_percentage").and_then(|x| x.as_f64())?;
-    let r = v
-        .get("resets_at")
-        .and_then(|x| x.as_str())
+    // The percentage key has varied across Claude Code versions; accept the known
+    // spellings. (statusline-raw.json reveals the actual one if none of these hit.)
+    let u = ["used_percentage", "utilization", "percent_used", "percentage"]
+        .iter()
+        .find_map(|k| v.get(*k).and_then(|x| x.as_f64()))?;
+    let r = ["resets_at", "reset_at", "resetsAt"]
+        .iter()
+        .find_map(|k| v.get(*k).and_then(|x| x.as_str()))
         .map(|s| s.to_string());
     Some(QuotaWindow {
         utilization: u,
@@ -69,6 +73,20 @@ fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
 pub fn run_hook() {
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
+
+    // Diagnostic: persist the raw payload Claude Code sends so we can verify the
+    // exact rate-limit schema (it varies by version/plan, and the parsed file
+    // alone can't tell us why a window came back null). Owner-only, local file.
+    {
+        let p = Config::dir().join("statusline-raw.json");
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&p, &input).is_ok() {
+            set_owner_only(&p);
+        }
+    }
+
     let v: serde_json::Value = serde_json::from_str(&input).unwrap_or(serde_json::json!({}));
     let rl = &v["rate_limits"];
 
@@ -215,6 +233,19 @@ mod tests {
         assert!(cmd.ends_with("--statusline"));
         // A quoted command with spaces in the path must still be recognized as ours.
         assert!(is_ours(&serde_json::json!({ "command": cmd })));
+    }
+
+    #[test]
+    fn win_from_accepts_alternate_keys() {
+        let a = win_from(&serde_json::json!({"used_percentage": 14.0, "resets_at": "t"})).unwrap();
+        assert_eq!(a.utilization, 14.0);
+        assert_eq!(a.resets_at.as_deref(), Some("t"));
+        // alternate spelling still parses
+        let b = win_from(&serde_json::json!({"utilization": 9.0})).unwrap();
+        assert_eq!(b.utilization, 9.0);
+        assert!(b.resets_at.is_none());
+        // no recognized key -> None
+        assert!(win_from(&serde_json::json!({"foo": 1})).is_none());
     }
 
     #[test]
