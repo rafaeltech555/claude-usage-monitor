@@ -60,14 +60,21 @@ let latestActivity: LiveActivity | null = null;
 let staleNow = false;
 let frozenRefreshing = false; // true between a manual frozen-card refresh click and the next render
 
-// One-shot melt on the widget container when the token recovers. The .thawing
-// class drives the CSS animation; remove it after the run so it can replay.
+// One-shot melt on the widget container when the token recovers. A dedicated
+// .thaw-overlay div is used (not a pseudo-element) because themes own
+// #detailed::before/::after for their corner ornaments.
 function playThaw() {
   for (const el of [$("compact"), $("detailed")]) {
-    el.classList.remove("thawing");
-    void el.offsetWidth; // force reflow so re-adding restarts the animation
+    el.querySelector(".thaw-overlay")?.remove(); // restart if mid-play
     el.classList.add("thawing");
-    setTimeout(() => el.classList.remove("thawing"), 1200); // 1.1s CSS animation + 100ms headroom
+    const ov = document.createElement("div");
+    ov.className = "thaw-overlay";
+    ov.textContent = "❄";
+    el.appendChild(ov);
+    setTimeout(() => {
+      ov.remove();
+      el.classList.remove("thawing");
+    }, 1200); // 1.1s CSS animation + 100ms headroom
   }
 }
 
