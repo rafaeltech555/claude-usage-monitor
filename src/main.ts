@@ -67,7 +67,7 @@ function playThaw() {
     el.classList.remove("thawing");
     void el.offsetWidth; // force reflow so re-adding restarts the animation
     el.classList.add("thawing");
-    setTimeout(() => el.classList.remove("thawing"), 1200);
+    setTimeout(() => el.classList.remove("thawing"), 1200); // 1.1s CSS animation + 100ms headroom
   }
 }
 
@@ -486,7 +486,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-frozen-refresh").addEventListener("click", (e) => {
     e.stopPropagation();
     frozenRefreshing = true;
-    const btn = $("btn-frozen-refresh") as HTMLButtonElement;
+    const btn = e.currentTarget as HTMLButtonElement;
     btn.disabled = true;
     btn.textContent = "重新整理中…";
     invoke("refresh_now");
