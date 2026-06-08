@@ -134,7 +134,11 @@ fn our_command() -> String {
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "claude-usage-monitor".into());
-    format!("{exe} --statusline")
+    // Quote the path: Claude Code runs this via a shell, and the macOS app lives
+    // at "/Applications/Claude Usage Monitor.app/..." — the spaces would otherwise
+    // split the command and the hook would never fire (so statusline.json never
+    // gets written). Quoting is harmless on space-free Linux paths too.
+    format!("\"{exe}\" --statusline")
 }
 
 fn is_ours(sl: &serde_json::Value) -> bool {
@@ -203,6 +207,15 @@ fn disable_at(path: &std::path::Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn our_command_is_quoted_and_detected_as_ours() {
+        let cmd = our_command();
+        assert!(cmd.starts_with('"'), "exe path must be quoted: {cmd}");
+        assert!(cmd.ends_with("--statusline"));
+        // A quoted command with spaces in the path must still be recognized as ours.
+        assert!(is_ours(&serde_json::json!({ "command": cmd })));
+    }
 
     #[test]
     fn is_ours_detects() {

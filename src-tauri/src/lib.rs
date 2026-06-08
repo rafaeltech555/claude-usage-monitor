@@ -120,6 +120,16 @@ pub fn run() {
                 let _ = if want_autostart { al.enable() } else { al.disable() };
             }
 
+            // Self-heal the statusLine registration for opted-in users: older
+            // builds wrote an unquoted command (broken on the macOS app path with
+            // spaces), and the exe path can change between installs. Re-register
+            // so the command in ~/.claude/settings.json is always current.
+            if app.state::<AppState>().config.lock().unwrap().statusline_optin {
+                if let Err(e) = statusline::enable() {
+                    eprintln!("[statusline] re-register on startup failed: {e}");
+                }
+            }
+
             // Size, position, and show the window (it starts hidden so the
             // pre-map set_decorations above takes effect on strict WMs).
             apply_mode(app.handle(), &mode);
@@ -128,8 +138,21 @@ pub fn run() {
             spawn_activity_ticker(app.handle().clone());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // macOS: clicking the Dock icon (Reopen) re-shows the widget after the
+            // ✕ "hide" button tucked it away. With the tray icon unreliable on
+            // macOS, this is the recovery path — otherwise the hidden window is
+            // unrecoverable without force-quitting and relaunching.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                if let Some(w) = _app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        });
 }
 
 // ---------------------------------------------------------------------------
