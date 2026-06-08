@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { fmtTokens, fmtCountdown, nextRenewal, fmtRate, fmtMinsToEmpty } from "./format";
+import { fmtTokens, fmtCountdown, nextRenewal, fmtRate, fmtMinsToEmpty, isStale, frozenHintText } from "./format";
 
 type QuotaWindow = { utilization: number; resets_at: string | null };
 type Quota = {
@@ -58,6 +58,19 @@ let latest: Snapshot | null = null;
 let cfg: Config;
 let latestActivity: LiveActivity | null = null;
 let staleNow = false;
+let frozenRefreshing = false; // true between a manual frozen-card refresh click and the next render
+
+// One-shot melt on the widget container when the token recovers. The .thawing
+// class drives the CSS animation; remove it after the run so it can replay.
+function playThaw() {
+  for (const el of [$("compact"), $("detailed")]) {
+    el.classList.remove("thawing");
+    void el.offsetWidth; // force reflow so re-adding restarts the animation
+    el.classList.add("thawing");
+    setTimeout(() => el.classList.remove("thawing"), 1200);
+  }
+}
+
 let lastFitH = 0;
 let lastFitW = 0;
 
@@ -264,8 +277,17 @@ function worse(a: Level, b: Level): Level {
 }
 
 function render(s: Snapshot) {
-  const stale = !!s.error && /401|unauthorized/i.test(s.error);
+  const stale = isStale(s.error);
+  if (staleNow && !stale) playThaw(); // frozen -> live: play the melt before updating staleNow
   document.body.classList.toggle("stale", stale);
+
+  // Reset the frozen-card button + hint each render.
+  const frozenBtn = $("btn-frozen-refresh") as HTMLButtonElement;
+  frozenBtn.disabled = false;
+  frozenBtn.textContent = "↻ 已重新登入，立即恢復";
+  $("frozen-hint").textContent = frozenHintText(stale, frozenRefreshing);
+  frozenRefreshing = false; // consumed (recovery succeeded, or the "still stale" hint was shown once)
+
   staleNow = stale;
 
   const five = s.quota.five_hour;
@@ -460,6 +482,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-hide").addEventListener("click", (e) => {
     e.stopPropagation();
     invoke("hide_window");
+  });
+  $("btn-frozen-refresh").addEventListener("click", (e) => {
+    e.stopPropagation();
+    frozenRefreshing = true;
+    const btn = $("btn-frozen-refresh") as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = "重新整理中…";
+    invoke("refresh_now");
   });
   $("btn-activity").addEventListener("click", (e) => {
     e.stopPropagation();
