@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fmtTokens, fmtCountdown, nextRenewal } from "./format";
 import { fmtRate, fmtMinsToEmpty } from "./format";
+import { isStale, frozenHintText } from "./format";
 
 describe("fmtTokens", () => {
   it("formats millions/thousands/units", () => {
@@ -76,5 +77,27 @@ describe("fmtMinsToEmpty", () => {
   it("returns empty for unknown / non-positive", () => {
     expect(fmtMinsToEmpty(null, false)).toBe("");
     expect(fmtMinsToEmpty(0, false)).toBe("");
+  });
+});
+
+describe("isStale", () => {
+  it("is true for 401 / unauthorized errors, false otherwise", () => {
+    expect(isStale("unauthorized (401) — token expired? open Claude Code to refresh")).toBe(true);
+    expect(isStale("HTTP 401")).toBe(true);
+    expect(isStale("Unauthorized")).toBe(true);
+    expect(isStale("network timeout")).toBe(false);
+    expect(isStale(null)).toBe(false);
+    expect(isStale(undefined)).toBe(false);
+  });
+});
+
+describe("frozenHintText", () => {
+  it("shows the retry-failed hint only after a manual refresh that is still stale", () => {
+    expect(frozenHintText(true, true)).toBe("仍未偵測到登入，請確認 Claude Code 已重新登入");
+  });
+  it("otherwise shows the static auto-retry hint", () => {
+    expect(frozenHintText(true, false)).toBe("自動每 ≤180 秒會重試一次");
+    expect(frozenHintText(false, true)).toBe("自動每 ≤180 秒會重試一次");
+    expect(frozenHintText(false, false)).toBe("自動每 ≤180 秒會重試一次");
   });
 });

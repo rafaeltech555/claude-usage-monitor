@@ -57,3 +57,17 @@ export function fmtMinsToEmpty(mins: number | null, beatsReset: boolean): string
   }
   return `≈ ${Math.round(mins)} 分見底`;
 }
+
+// Stale = the quota poll failed with an auth error (token expired). Same rule
+// used by the frozen UI; centralized here so it is unit-tested.
+export function isStale(error: string | null | undefined): boolean {
+  return !!error && /401|unauthorized/i.test(error);
+}
+
+// Hint under the frozen card. The "still expired" message shows only right
+// after a manual refresh that did not recover; otherwise the static note that
+// recovery is automatic (so a waiting user does not think it is a bug).
+export function frozenHintText(stillStale: boolean, manualRefresh: boolean): string {
+  if (stillStale && manualRefresh) return "仍未偵測到登入，請確認 Claude Code 已重新登入";
+  return "自動每 ≤180 秒會重試一次";
+}
