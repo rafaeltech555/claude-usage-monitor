@@ -11,7 +11,7 @@
 use crate::config::Config;
 use crate::quota::{QuotaUsage, QuotaWindow};
 use serde::{Deserialize, Serialize};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 pub fn data_path() -> PathBuf {
@@ -88,6 +88,20 @@ pub fn parse_last_context_fill(content: &str) -> Option<u64> {
         }
     }
     last
+}
+
+/// Read at most the last 128 KiB of a transcript and return the latest context
+/// fill. Bounds work regardless of transcript size; a partial leading line is
+/// harmlessly skipped by the parser.
+pub fn read_context_fill(path: &Path) -> Option<u64> {
+    const TAIL_BYTES: u64 = 128 * 1024;
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    let start = len.saturating_sub(TAIL_BYTES);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = String::new();
+    f.read_to_string(&mut buf).ok()?;
+    parse_last_context_fill(&buf)
 }
 
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
@@ -326,6 +340,28 @@ mod tests {
         std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
         assert!(enable_at(&path).is_err());
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn read_context_fill_tails_a_file() {
+        let dir = std::env::temp_dir().join(format!("cum-ctx-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n",
+                "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":9,\"cache_read_input_tokens\":11}}}\n"
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(read_context_fill(&path), Some(20)); // last line: 9 + 11
+
+        // missing file -> None
+        assert_eq!(read_context_fill(&dir.join("nope.jsonl")), None);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
