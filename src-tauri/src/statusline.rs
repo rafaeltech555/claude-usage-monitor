@@ -60,6 +60,17 @@ pub fn context_fill(usage: &serde_json::Value) -> u64 {
     g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens")
 }
 
+/// Pure: context-window size for the denominator. The statusline payload's
+/// model id may or may not carry a "1m" marker (the transcript's never does), so
+/// we also treat `exceeds_200k_tokens` as proof of a 1M session.
+pub fn context_window(model_id: &str, exceeds_200k: bool) -> u64 {
+    if model_id.to_lowercase().contains("1m") || exceeds_200k {
+        1_000_000
+    } else {
+        200_000
+    }
+}
+
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
     // The percentage key has varied across Claude Code versions; accept the known
     // spellings. (statusline-raw.json reveals the actual one if none of these hit.)
@@ -296,6 +307,17 @@ mod tests {
         std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
         assert!(enable_at(&path).is_err());
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn context_window_detects_1m() {
+        // model id carrying the 1m marker -> 1M
+        assert_eq!(context_window("claude-opus-4-8[1m]", false), 1_000_000);
+        assert_eq!(context_window("CLAUDE-OPUS-4-8-1M", false), 1_000_000);
+        // no marker, but already past 200k -> must be a 1M session
+        assert_eq!(context_window("claude-opus-4-8", true), 1_000_000);
+        // no marker, not over 200k -> default 200k
+        assert_eq!(context_window("claude-opus-4-8", false), 200_000);
     }
 
     #[test]
