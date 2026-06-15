@@ -71,6 +71,25 @@ pub fn context_window(model_id: &str, exceeds_200k: bool) -> u64 {
     }
 }
 
+/// Pure: scan complete transcript lines, return the context fill of the LAST
+/// assistant message that carries usage. Lines that fail to parse (e.g. a
+/// truncated tail line) are skipped.
+pub fn parse_last_context_fill(content: &str) -> Option<u64> {
+    let mut last: Option<u64> = None;
+    for line in content.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        if let Some(usage) = v.get("message").and_then(|m| m.get("usage")) {
+            last = Some(context_fill(usage));
+        }
+    }
+    last
+}
+
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
     // The percentage key has varied across Claude Code versions; accept the known
     // spellings. (statusline-raw.json reveals the actual one if none of these hit.)
@@ -307,6 +326,28 @@ mod tests {
         std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
         assert!(enable_at(&path).is_err());
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn parse_last_context_fill_takes_last_assistant_usage() {
+        let content = concat!(
+            "{\"type\":\"user\"}\n",
+            "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":1,\"cache_read_input_tokens\":100}}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":5,\"cache_creation_input_tokens\":20,\"cache_read_input_tokens\":300}}}\n"
+        );
+        // last assistant usage: 5 + 20 + 300 = 325
+        assert_eq!(parse_last_context_fill(content), Some(325));
+
+        // a truncated leading line is ignored; the valid line below still counts
+        let partial = concat!(
+            "ut_tokens\":1,\"cache_read_input_tokens\":100}}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":7}}}\n"
+        );
+        assert_eq!(parse_last_context_fill(partial), Some(7));
+
+        // no assistant-with-usage -> None
+        assert_eq!(parse_last_context_fill("{\"type\":\"user\"}\nnot json\n"), None);
+        assert_eq!(parse_last_context_fill(""), None);
     }
 
     #[test]
