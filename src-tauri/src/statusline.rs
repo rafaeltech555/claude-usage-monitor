@@ -53,6 +53,13 @@ fn settings_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude/settings.json"))
 }
 
+/// Pure: tokens occupying the model's context window for one request, i.e. the
+/// total input sent that turn. Output is excluded (it is not yet context).
+pub fn context_fill(usage: &serde_json::Value) -> u64 {
+    let g = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens")
+}
+
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
     // The percentage key has varied across Claude Code versions; accept the known
     // spellings. (statusline-raw.json reveals the actual one if none of these hit.)
@@ -289,6 +296,20 @@ mod tests {
         std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
         assert!(enable_at(&path).is_err());
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn context_fill_sums_input_and_cache() {
+        let u = serde_json::json!({
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 1693,
+            "cache_read_input_tokens": 48565,
+            "output_tokens": 9999
+        });
+        assert_eq!(context_fill(&u), 50260); // output is NOT part of context fill
+        // missing keys count as 0
+        assert_eq!(context_fill(&serde_json::json!({"input_tokens": 10})), 10);
+        assert_eq!(context_fill(&serde_json::json!({})), 0);
     }
 
     #[test]
