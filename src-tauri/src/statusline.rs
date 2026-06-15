@@ -104,6 +104,17 @@ pub fn read_context_fill(path: &Path) -> Option<u64> {
     parse_last_context_fill(&buf)
 }
 
+/// Pure: the " · ctx N%" suffix, or "" when fill is unknown or window is invalid.
+pub fn ctx_segment(fill: Option<u64>, window: u64) -> String {
+    match fill {
+        Some(f) if window > 0 => {
+            let pct = ((f as f64 / window as f64) * 100.0).round().min(100.0) as u64;
+            format!(" · ctx {pct}%")
+        }
+        _ => String::new(),
+    }
+}
+
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
     // The percentage key has varied across Claude Code versions; accept the known
     // spellings. (statusline-raw.json reveals the actual one if none of these hit.)
@@ -175,7 +186,20 @@ pub fn run_hook() {
             .map(|x| format!("{:.0}%", x.utilization))
             .unwrap_or_else(|| "—".into())
     };
-    print!("⚡ {} · 7d {}", fmt(&usage.five_hour), fmt(&usage.seven_day));
+    let ctx = v
+        .get("transcript_path")
+        .and_then(|p| p.as_str())
+        .and_then(|p| read_context_fill(Path::new(p)));
+    let window = context_window(
+        v.get("model").and_then(|m| m.get("id")).and_then(|x| x.as_str()).unwrap_or(""),
+        v.get("exceeds_200k_tokens").and_then(|x| x.as_bool()).unwrap_or(false),
+    );
+    print!(
+        "⚡ {} · 7d {}{}",
+        fmt(&usage.five_hour),
+        fmt(&usage.seven_day),
+        ctx_segment(ctx, window)
+    );
 }
 
 fn set_owner_only(p: &Path) {
@@ -340,6 +364,18 @@ mod tests {
         std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
         assert!(enable_at(&path).is_err());
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn ctx_segment_formats_and_clamps() {
+        assert_eq!(ctx_segment(Some(86_000), 200_000), " · ctx 43%");
+        assert_eq!(ctx_segment(Some(500_000), 1_000_000), " · ctx 50%");
+        // over-100 (wrong denominator) clamps to 100
+        assert_eq!(ctx_segment(Some(250_000), 200_000), " · ctx 100%");
+        // unknown fill -> empty segment (omitted entirely)
+        assert_eq!(ctx_segment(None, 200_000), "");
+        // guard against zero denominator
+        assert_eq!(ctx_segment(Some(10), 0), "");
     }
 
     #[test]
