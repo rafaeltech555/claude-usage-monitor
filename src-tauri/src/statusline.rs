@@ -92,15 +92,18 @@ pub fn parse_last_context_fill(content: &str) -> Option<u64> {
 
 /// Read at most the last 128 KiB of a transcript and return the latest context
 /// fill. Bounds work regardless of transcript size; a partial leading line is
-/// harmlessly skipped by the parser.
+/// harmlessly skipped by the parser. The tail seek may land mid-codepoint when
+/// the file contains multi-byte UTF-8 characters; we use a lossy conversion so
+/// that a single garbled boundary byte does not discard the entire read.
 pub fn read_context_fill(path: &Path) -> Option<u64> {
     const TAIL_BYTES: u64 = 128 * 1024;
     let mut f = std::fs::File::open(path).ok()?;
     let len = f.metadata().ok()?.len();
     let start = len.saturating_sub(TAIL_BYTES);
     f.seek(SeekFrom::Start(start)).ok()?;
-    let mut buf = String::new();
-    f.read_to_string(&mut buf).ok()?;
+    let mut raw = Vec::new();
+    f.read_to_end(&mut raw).ok()?;
+    let buf = String::from_utf8_lossy(&raw);
     parse_last_context_fill(&buf)
 }
 
@@ -445,6 +448,45 @@ mod tests {
         // missing keys count as 0
         assert_eq!(context_fill(&serde_json::json!({"input_tokens": 10})), 10);
         assert_eq!(context_fill(&serde_json::json!({})), 0);
+    }
+
+    #[test]
+    fn read_context_fill_survives_utf8_boundary() {
+        // Build a transcript larger than 128 KiB (TAIL_BYTES) so the tail-seek
+        // path (start > 0) is exercised. The bulk padding contains multi-byte
+        // UTF-8 codepoints (Chinese characters) so the 128 KiB seek boundary
+        // can land mid-codepoint. With the old read_to_string implementation
+        // that would yield an InvalidData error and silently return None.
+        let dir = std::env::temp_dir().join(format!("cum-utf8-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("large.jsonl");
+
+        // Each Chinese char is 3 bytes in UTF-8; build a padding line > 128 KiB.
+        // "安安你好" repeated ~12 000 times ≈ 192 KiB (well over the 128 KiB tail).
+        let filler: String = "安安你好".repeat(12_000);
+        let padding_line = format!(
+            "{{\"type\":\"assistant\",\"message\":{{\"content\":\"{filler}\",\"usage\":{{\"input_tokens\":1}}}}}}\n"
+        );
+        // Final valid line that should be the last parsed usage.
+        let last_line =
+            "{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":42,\"cache_read_input_tokens\":8}}}\n";
+
+        let mut content = padding_line;
+        content.push_str(last_line);
+
+        // Sanity-check: the file must exceed 128 KiB so start > 0.
+        assert!(
+            content.len() > 128 * 1024,
+            "test file too small: {} bytes",
+            content.len()
+        );
+
+        std::fs::write(&path, &content).unwrap();
+
+        // Expected: last line's usage = 42 + 8 = 50.
+        assert_eq!(read_context_fill(&path), Some(50));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
