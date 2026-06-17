@@ -81,15 +81,19 @@ pub fn mins_to_empty(samples: &[(DateTime<Local>, f64)], current_pct: f64) -> Op
         .collect();
     let ys: Vec<f64> = samples.iter().map(|(_, p)| *p).collect();
     let n = xs.len() as f64;
-    let sx: f64 = xs.iter().sum();
-    let sy: f64 = ys.iter().sum();
-    let sxx: f64 = xs.iter().map(|x| x * x).sum();
-    let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| x * y).sum();
-    let denom = n * sxx - sx * sx;
-    if denom == 0.0 {
+    let mx: f64 = xs.iter().sum::<f64>() / n;
+    let my: f64 = ys.iter().sum::<f64>() / n;
+    // Mean-centered (covariance / variance) form. The naive `n*Σxy - Σx*Σy`
+    // form suffers catastrophic cancellation on a flat series: it should be 0
+    // but rounds to a tiny ±residual, and a positive one yields an absurd ETA
+    // (the "≈ 18262641892567時44分見底" bug). Centering makes flat data give
+    // exactly 0, so the slope guard below rejects it.
+    let sxx: f64 = xs.iter().map(|x| (x - mx) * (x - mx)).sum();
+    let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+    if sxx == 0.0 {
         return None;
     }
-    let slope = (n * sxy - sx * sy) / denom; // %/min
+    let slope = sxy / sxx; // %/min
     if slope <= 0.0 {
         return None;
     }
@@ -333,6 +337,20 @@ mod tests {
         assert!(mins_to_empty(&flat, 50.0).is_none()); // zero slope
         let full = vec![(t(600, now), 90.0), (now, 100.0)];
         assert!(mins_to_empty(&full, 100.0).is_none()); // already full
+    }
+
+    #[test]
+    fn mins_to_empty_none_when_many_flat_samples() {
+        // Real-world plateau: the poller keeps ~10 samples and the 5h window sits
+        // at a constant percentage. A naive `n*Σxy - Σx*Σy` slope suffers float
+        // cancellation here, yielding a tiny POSITIVE slope and an absurd ETA
+        // (trillions of hours). The fit must treat a flat series as zero slope.
+        let now = Local::now();
+        // 7 samples spaced ~118s, oldest first, all at 91% (matches the observed
+        // bug where the ETA read "≈ 18262641892567時44分見底").
+        let secs = [708, 590, 472, 354, 236, 118, 0];
+        let flat: Vec<_> = secs.iter().map(|&s| (t(s, now), 91.0)).collect();
+        assert!(mins_to_empty(&flat, 91.0).is_none());
     }
 
     #[test]
