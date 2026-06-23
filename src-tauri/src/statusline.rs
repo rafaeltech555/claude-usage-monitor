@@ -118,6 +118,18 @@ pub fn ctx_segment(fill: Option<u64>, window: u64) -> String {
     }
 }
 
+/// Normalize a reset timestamp to an RFC3339 string the frontend can `new Date()`.
+/// Claude Code's statusline payload sends `resets_at` as a Unix epoch (seconds)
+/// integer, while the OAuth endpoint sends an RFC3339 string — accept both so the
+/// two sources stay interchangeable. Null/other types yield None.
+fn normalize_reset(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    let secs = v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))?;
+    chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.to_rfc3339())
+}
+
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
     // The percentage key has varied across Claude Code versions; accept the known
     // spellings. (statusline-raw.json reveals the actual one if none of these hit.)
@@ -126,8 +138,9 @@ fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
         .find_map(|k| v.get(*k).and_then(|x| x.as_f64()))?;
     let r = ["resets_at", "reset_at", "resetsAt"]
         .iter()
-        .find_map(|k| v.get(*k).and_then(|x| x.as_str()))
-        .map(|s| s.to_string());
+        .filter_map(|k| v.get(*k))
+        .find(|x| !x.is_null())
+        .and_then(normalize_reset);
     Some(QuotaWindow {
         utilization: u,
         resets_at: r,
@@ -324,6 +337,21 @@ mod tests {
         assert!(b.resets_at.is_none());
         // no recognized key -> None
         assert!(win_from(&serde_json::json!({"foo": 1})).is_none());
+    }
+
+    #[test]
+    fn win_from_converts_epoch_resets_at() {
+        // Claude Code's statusline now reports rate_limits.*.resets_at as a Unix
+        // epoch (seconds), not an RFC3339 string. We must normalize it to a string
+        // so the frontend (which does `new Date(resets_at)`) can parse it — matching
+        // the OAuth path. A bare integer used to slip through .as_str() as None.
+        let w = win_from(&serde_json::json!({"used_percentage": 33, "resets_at": 1782200400}))
+            .unwrap();
+        assert_eq!(w.utilization, 33.0);
+        assert_eq!(w.resets_at.as_deref(), Some("2026-06-23T07:40:00+00:00"));
+        // a null reset stays None
+        let n = win_from(&serde_json::json!({"used_percentage": 1, "resets_at": null})).unwrap();
+        assert!(n.resets_at.is_none());
     }
 
     #[test]
