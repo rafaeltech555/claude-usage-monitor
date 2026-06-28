@@ -36,11 +36,11 @@
 
 ```bash
 # Debian/Ubuntu/Mint（檔名含空格,記得加引號）
-sudo dpkg -i "Claude Usage Monitor_0.1.0_amd64.deb"
+sudo dpkg -i "Claude Usage Monitor_0.2.0_amd64.deb"
 
 # 或免安裝
-chmod +x "Claude Usage Monitor_0.1.0_amd64.AppImage"
-"./Claude Usage Monitor_0.1.0_amd64.AppImage"
+chmod +x "Claude Usage Monitor_0.2.0_amd64.AppImage"
+"./Claude Usage Monitor_0.2.0_amd64.AppImage"
 ```
 
 安裝後在應用程式選單搜尋「**Claude Usage Monitor**」即可開啟(可釘到 Dock/我的最愛);設定裡勾「開機自動啟動」後重開機會自動出現。
@@ -79,3 +79,25 @@ npm test                                           # 前端 vitest：格式化 +
 - 訂閱續訂日需手動填帳單日：OAuth token 無法存取帳單端點（`/api/oauth/profile` 的訂閱建立日 ≠ 實際帳單日）。
 - macOS 已由 CI 打包(unsigned)且支援 Keychain token,但尚未在實機完整驗證(Keychain service 名稱 `Claude Code-credentials` 待真機確認);簽章/公證與 Windows 支援尚未做。
 - 即時活動的「見底時間」依 180s 取樣的 5h 百分比斜率估算，較粗、會跳，故標「≈」；session 累計採「首次完整讀 + 之後增量 tail」近似。
+
+## 版本紀錄
+
+### v0.2.0（2026-06-28）
+
+**新功能**
+
+- **statusline context 使用率** `· ctx N%`：啟用 statusLine hook 後，狀態列尾端顯示目前 session 的 context window 使用率，自動辨識 200k / 1M window，讀不到時省略。
+
+**修正**
+
+- **重置時間顯示「—」**：Claude Code 在某些版本改以 epoch int（而非 RFC 3339）回傳 `resets_at`，導致重置倒數顯示破損；`win_from` 改為同時接受兩種格式，問題修正。
+- **5h 見底估算溢位**：當速率極低時浮點相消導致估算結果爆成兆級小時；改以安全的 saturating subtraction 修正。
+- **statusline context 讀取容忍 mid-codepoint tail 邊界**：尾端截斷在多位元組字元中間時，改為向前找完整 UTF-8 邊界，避免 panic 或亂碼。
+- **in-widget ⚙ 設定按鈕**：詳細卡右上角的設定按鈕修正，不必依賴系統匣即可開啟設定，方便系統匣圖示不顯示時也能設定。
+- **429 指數退避**：API 回 429 時改採 exponential backoff，避免過度重試。
+- **statusLine 路徑含空格引號**：`statusLine` 設定的可執行檔路徑若含空格，改為自動加引號，避免路徑解析失敗。
+- **macOS dock-reopen handler**：修正 macOS 點選 Dock 圖示時恢復隱藏視窗的行為（macOS 相關功能仍待實機驗證）。
+
+### v0.1.0
+
+初始發佈：基本 quota 監控、即時活動、四主題、系統匣、門檻警示、過期結冰、statusline hook opt-in。
