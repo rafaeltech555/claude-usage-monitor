@@ -129,15 +129,39 @@ pub fn model_segment(limits: &[crate::quota::ModelLimit]) -> String {
         .collect()
 }
 
-/// Pure: the " · ctx N%" suffix, or "" when fill is unknown or window is invalid.
-pub fn ctx_segment(fill: Option<u64>, window: u64) -> String {
+/// Pure: percentage from a transcript-tail fill estimate and a guessed window
+/// (the pre-context_window fallback path). None when fill is unknown or the
+/// window is invalid.
+pub fn ctx_percent_from_fill(fill: Option<u64>, window: u64) -> Option<f64> {
     match fill {
-        Some(f) if window > 0 => {
-            let pct = ((f as f64 / window as f64) * 100.0).round().min(100.0);
-            format!(" · ctx {}", paint_pct(pct))
-        }
-        _ => String::new(),
+        Some(f) if window > 0 => Some(((f as f64 / window as f64) * 100.0).round().min(100.0)),
+        _ => None,
     }
+}
+
+/// Pure: the " · ctx N%" suffix from a ready percentage ("" when unknown).
+pub fn ctx_segment_pct(pct: Option<f64>) -> String {
+    pct.map(|p| format!(" · ctx {}", paint_pct(p)))
+        .unwrap_or_default()
+}
+
+/// Pure: context usage straight from the payload's `context_window` object.
+/// Claude Code sends the authoritative window size and used percentage here —
+/// trusting it beats the model-id "1m"-marker guess, which breaks on models
+/// with a native 1M window (Fable 5's id carries no marker → 92% vs real 19%).
+/// None when the payload doesn't carry it (older Claude Code) — callers fall
+/// back to the transcript-tail estimate.
+pub fn payload_ctx_percent(v: &serde_json::Value) -> Option<f64> {
+    let cw = v.get("context_window")?;
+    if let Some(p) = cw.get("used_percentage").and_then(|x| x.as_f64()) {
+        return Some(p.clamp(0.0, 100.0));
+    }
+    let size = cw
+        .get("context_window_size")
+        .and_then(|x| x.as_f64())
+        .filter(|s| *s > 0.0)?;
+    let used = context_fill(cw.get("current_usage")?) as f64;
+    Some((used / size * 100.0).round().clamp(0.0, 100.0))
 }
 
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
@@ -259,21 +283,26 @@ pub fn run_hook() {
             .map(|x| paint_pct(x.utilization))
             .unwrap_or_else(|| "—".into())
     };
-    let ctx = v
-        .get("transcript_path")
-        .and_then(|p| p.as_str())
-        .and_then(|p| read_context_fill(Path::new(p)));
-    let window = context_window(
-        v.get("model").and_then(|m| m.get("id")).and_then(|x| x.as_str()).unwrap_or(""),
-        v.get("exceeds_200k_tokens").and_then(|x| x.as_bool()).unwrap_or(false),
-    );
+    let ctx_pct = payload_ctx_percent(&v).or_else(|| {
+        // Older Claude Code without a context_window object: estimate from the
+        // transcript tail and guess the window size.
+        let fill = v
+            .get("transcript_path")
+            .and_then(|p| p.as_str())
+            .and_then(|p| read_context_fill(Path::new(p)));
+        let window = context_window(
+            v.get("model").and_then(|m| m.get("id")).and_then(|x| x.as_str()).unwrap_or(""),
+            v.get("exceeds_200k_tokens").and_then(|x| x.as_bool()).unwrap_or(false),
+        );
+        ctx_percent_from_fill(fill, window)
+    });
     let model_seg = model_segment(&model_limits_for_hook());
     print!(
         "⚡ {} · 7d {}{}{}",
         fmt(&usage.five_hour),
         fmt(&usage.seven_day),
         model_seg,
-        ctx_segment(ctx, window)
+        ctx_segment_pct(ctx_pct)
     );
 }
 
@@ -457,15 +486,15 @@ mod tests {
     }
 
     #[test]
-    fn ctx_segment_formats_and_clamps() {
-        assert_eq!(ctx_segment(Some(86_000), 200_000), format!(" · ctx {}", paint_pct(43.0)));
-        assert_eq!(ctx_segment(Some(500_000), 1_000_000), format!(" · ctx {}", paint_pct(50.0)));
+    fn ctx_percent_from_fill_computes_and_clamps() {
+        assert_eq!(ctx_percent_from_fill(Some(86_000), 200_000), Some(43.0));
+        assert_eq!(ctx_percent_from_fill(Some(500_000), 1_000_000), Some(50.0));
         // over-100 (wrong denominator) clamps to 100
-        assert_eq!(ctx_segment(Some(250_000), 200_000), format!(" · ctx {}", paint_pct(100.0)));
-        // unknown fill -> empty segment (omitted entirely)
-        assert_eq!(ctx_segment(None, 200_000), "");
+        assert_eq!(ctx_percent_from_fill(Some(250_000), 200_000), Some(100.0));
+        // unknown fill -> None (segment omitted entirely)
+        assert_eq!(ctx_percent_from_fill(None, 200_000), None);
         // guard against zero denominator
-        assert_eq!(ctx_segment(Some(10), 0), "");
+        assert_eq!(ctx_percent_from_fill(Some(10), 0), None);
     }
 
     #[test]
@@ -491,6 +520,45 @@ mod tests {
             model_segment(&two),
             format!(" · A {} · B {}", paint_pct(1.0), paint_pct(2.0))
         );
+    }
+
+    #[test]
+    fn payload_ctx_percent_prefers_reported_percentage() {
+        // Claude Code 送來的 payload 有第一手 context_window 物件——直接信它。
+        // 真實案例：Fable 5 原生 1M 窗但 model.id 無 "1m" 標記，舊的猜窗路徑
+        // 算成 189k/200k = 92%，實際是 19%。
+        let v = serde_json::json!({"context_window": {
+            "context_window_size": 1_000_000,
+            "used_percentage": 19,
+            "current_usage": {"input_tokens": 2, "cache_creation_input_tokens": 1531,
+                              "cache_read_input_tokens": 188069, "output_tokens": 595}
+        }});
+        assert_eq!(payload_ctx_percent(&v), Some(19.0));
+    }
+
+    #[test]
+    fn payload_ctx_percent_derives_clamps_and_falls_back() {
+        // 沒給 used_percentage：用 current_usage/size 推導（output 不算 context）
+        let v = serde_json::json!({"context_window": {
+            "context_window_size": 200_000,
+            "current_usage": {"input_tokens": 10_000, "cache_read_input_tokens": 90_000}
+        }});
+        assert_eq!(payload_ctx_percent(&v), Some(50.0));
+        // 整個 context_window 不存在 → None（讓舊 transcript 路徑接手）
+        assert_eq!(payload_ctx_percent(&serde_json::json!({})), None);
+        // size 0 防呆
+        let z = serde_json::json!({"context_window": {"context_window_size": 0,
+            "current_usage": {"input_tokens": 1}}});
+        assert_eq!(payload_ctx_percent(&z), None);
+        // 異常值夾進 0..100
+        let o = serde_json::json!({"context_window": {"used_percentage": 130}});
+        assert_eq!(payload_ctx_percent(&o), Some(100.0));
+    }
+
+    #[test]
+    fn ctx_segment_pct_formats_or_omits() {
+        assert_eq!(ctx_segment_pct(Some(19.0)), format!(" · ctx {}", paint_pct(19.0)));
+        assert_eq!(ctx_segment_pct(None), "");
     }
 
     #[test]
