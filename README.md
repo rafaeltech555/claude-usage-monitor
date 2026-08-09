@@ -24,7 +24,7 @@
   - **魔導霓虹**:電路網格 + 青/洋紅霓虹 + 掃描線(Orbitron + Share Tech Mono)。
 - **釘選任何角落（支援多螢幕）**：無邊框、永遠置頂,拖到四角自動吸附並記住位置;**多螢幕**下會記住你拖去的那台螢幕(該螢幕拔除時自動退回主螢幕)。設定可改「**自由位置**」,放在任何螢幕的任意位置都記住、不吸附角落。
 - **單一實例**：重複啟動(或開機自啟與手動啟動相撞)只會把既有視窗叫回前景,不會開出第二個托盤圖示。
-- **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。「啟用 statusline 後，狀態列會額外顯示目前 session 的 context 使用率 `· ctx N%`（以該 session transcript 的最後一筆 usage 估算，自動辨識 200k／1M context window；讀不到時自動省略）。」
+- **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。狀態列格式為 `⚡ N% · 7d N% · Fable N% · ctx N%`：`⚡` 為 5 小時額度、`7d` 為每週額度、`Fable` 為 Fable 模型專屬每週額度（資料來自 OAuth usage endpoint 的 `limits[]`，經 `~/.config/claude-usage-monitor/quota-cache.json` 快取，widget 輪詢時回寫；快取逾時則 hook 自行以 2 秒 timeout 補抓一次），`ctx` 為目前 session 的 context 使用率（以該 session transcript 的最後一筆 usage 估算，自動辨識 200k／1M context window）——三者皆讀不到時自動省略對應段落。所有百分比依危險度上色（<50 綠、50–79 黃、≥80 紅）。
 
 ## 下載 / Releases
 
