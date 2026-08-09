@@ -22,9 +22,17 @@ pub struct Config {
     pub opacity: f64,
     /// Launch on login (wired up in a later milestone).
     pub autostart: bool,
-    /// Opt-in: register a statusline command in ~/.claude/settings.json.
-    /// Default OFF — we never touch the user's settings unless they enable this.
+    /// Register a statusline command in ~/.claude/settings.json.
+    /// Default ON since M5 (auto-enabled once on first launch via the safe
+    /// path: backup + refuse to clobber a foreign statusLine). Turning it off
+    /// is persisted and never auto-reverted.
     pub statusline_optin: bool,
+    /// Show the desktop widget window. Hiding it (tray toggle / ✕ button /
+    /// settings) is remembered; the tray stays as the re-entry point.
+    pub show_widget: bool,
+    /// One-shot flag: the first-launch statusline auto-enable has been
+    /// attempted (success or not), so we never force it again.
+    pub statusline_auto_enable_done: bool,
     /// Show the flame effect on the tray rings when usage rises.
     pub effects: bool,
     /// Show a prominent pulsing alert on the widget when warn/crit thresholds hit.
@@ -55,7 +63,9 @@ impl Default for Config {
             crit_threshold: 90.0,
             opacity: 0.96,
             autostart: false,
-            statusline_optin: false,
+            statusline_optin: true,
+            show_widget: true,
+            statusline_auto_enable_done: false,
             effects: true,
             alert_effects: true,
             renewal_day: 0,
@@ -124,7 +134,19 @@ mod tests {
         assert_eq!(c.corner, "tr");
         assert_eq!(c.poll_secs, MIN_POLL_SECS);
         assert!(c.effects);
-        assert!(!c.statusline_optin);
+        assert!(c.statusline_optin); // M5 起出廠預設開
+        assert!(c.show_widget);
+        assert!(!c.statusline_auto_enable_done);
+    }
+
+    #[test]
+    fn old_config_json_gets_new_field_defaults() {
+        // 舊版設定檔沒有 M5 新欄位：補預設值，且既有明確值不被蓋掉
+        let old = r#"{"mode":"detailed","statusline_optin":false}"#;
+        let c: Config = serde_json::from_str(old).unwrap();
+        assert!(!c.statusline_optin); // 使用者存過的明確 false 要保留
+        assert!(c.show_widget);
+        assert!(!c.statusline_auto_enable_done);
     }
 
     #[test]
