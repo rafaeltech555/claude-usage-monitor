@@ -43,16 +43,17 @@
 
 ### M5：預設開啟＋顯示面開關記憶
 
-**config.json 擴充**
-- 新增 `displays: { widget: bool, statusline: bool }`，預設 `{ widget: true, statusline: true }`。舊設定檔缺此欄位時以預設補齊（向後相容）。
+**config.json 擴充（實作決策 2026-08-09：平面欄位，不巢狀）**
+- config 既有風格是平面欄位，不新增巢狀 `displays: {…}`。沿用既有 `statusline_optin: bool`，預設由 `false` 改為 `true`；新增 `show_widget: bool`，預設 `true`。舊設定檔缺 `show_widget` 時以預設補齊（向後相容），已存在的欄位（含使用者存過的明確 `false`）不被蓋掉。
 - 新增 `statusline_auto_enable_done: bool`（預設 false），記錄「首次自動啟用」是否已嘗試過，避免使用者手動關掉後每次啟動又被打開。
 
 **啟動行為**
-- app 啟動時：`displays.statusline == true` 且 `statusline_auto_enable_done == false` 且 statusline 尚未安裝 → 走既有 `enable_at` 安全路徑自動啟用（備份 `~/.claude/settings.json`；偵測到他人的 statusLine 設定則**不動它**，只在 settings UI 顯示狀態），完成後把 `statusline_auto_enable_done` 設 true。
-- `displays.widget == false` → 啟動時不顯示主視窗，只留 tray（tray 為重新開啟的入口）；`true` 則照現況。
+- app 啟動時：`statusline_optin == true` → 走既有 `enable_at` 安全路徑（自我修復＋自動啟用共用同一路徑）：備份 `~/.claude/settings.json`；偵測到他人的 statusLine 設定則**不動它**，只在 settings UI 顯示狀態（見下）。`statusline_auto_enable_done == false` 時，不論 enable 是否成功，啟動流程結束都把它設 true，之後永不再自動觸發。
+- `show_widget == false` → 啟動時不顯示主視窗，只留 tray（tray 為重新開啟的入口）；`true` 則照現況顯示。**所有會隱藏視窗的路徑（tray toggle、✕ 按鈕、設定頁 checkbox）都統一寫回 `show_widget`**，確保下次啟動照使用者最後一次的顯示習慣。
 
 **開關 UI**
-- settings view 新增兩個 toggle：「桌面小窗」「Claude Code statusline」；tray 選單同步加入。切換即寫回 config，statusline toggle 同時呼叫既有 enable/disable 路徑。
+- settings view 新增「顯示桌面小窗」toggle（沿用既有「statusline 即時更新」toggle）。**tray 選單不加 statusline 勾選項**——設定頁既有 toggle 已覆蓋此需求，tray 選單的「設定…」一鍵可達，不重複建 UI。
+- statusline toggle 開啟時，若偵測到 `statusline_status()` 回傳 `"foreign"`（他人的 statusLine 佔用），settings UI 顯示警示文字，但不搶奪或覆蓋對方設定。
 
 ## 錯誤處理
 
