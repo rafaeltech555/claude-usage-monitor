@@ -107,12 +107,34 @@ pub fn read_context_fill(path: &Path) -> Option<u64> {
     parse_last_context_fill(&buf)
 }
 
+/// Pure: render a percentage with an ANSI 256-color by danger level
+/// (<50 green 114, 50–79 yellow 221, >=80 red 203). Claude Code renders
+/// ANSI escapes in statusline output.
+pub fn paint_pct(pct: f64) -> String {
+    let color = if pct >= 80.0 {
+        203
+    } else if pct >= 50.0 {
+        221
+    } else {
+        114
+    };
+    format!("\x1b[38;5;{color}m{pct:.0}%\x1b[0m")
+}
+
+/// Pure: " · <label> <pct>" segments for model-scoped limits ("" when none).
+pub fn model_segment(limits: &[crate::quota::ModelLimit]) -> String {
+    limits
+        .iter()
+        .map(|l| format!(" · {} {}", l.label, paint_pct(l.percent)))
+        .collect()
+}
+
 /// Pure: the " · ctx N%" suffix, or "" when fill is unknown or window is invalid.
 pub fn ctx_segment(fill: Option<u64>, window: u64) -> String {
     match fill {
         Some(f) if window > 0 => {
-            let pct = ((f as f64 / window as f64) * 100.0).round().min(100.0) as u64;
-            format!(" · ctx {pct}%")
+            let pct = ((f as f64 / window as f64) * 100.0).round().min(100.0);
+            format!(" · ctx {}", paint_pct(pct))
         }
         _ => String::new(),
     }
@@ -188,7 +210,7 @@ pub fn run_hook() {
 
     let fmt = |w: &Option<QuotaWindow>| {
         w.as_ref()
-            .map(|x| format!("{:.0}%", x.utilization))
+            .map(|x| paint_pct(x.utilization))
             .unwrap_or_else(|| "—".into())
     };
     let ctx = v
@@ -388,14 +410,39 @@ mod tests {
 
     #[test]
     fn ctx_segment_formats_and_clamps() {
-        assert_eq!(ctx_segment(Some(86_000), 200_000), " · ctx 43%");
-        assert_eq!(ctx_segment(Some(500_000), 1_000_000), " · ctx 50%");
+        assert_eq!(ctx_segment(Some(86_000), 200_000), format!(" · ctx {}", paint_pct(43.0)));
+        assert_eq!(ctx_segment(Some(500_000), 1_000_000), format!(" · ctx {}", paint_pct(50.0)));
         // over-100 (wrong denominator) clamps to 100
-        assert_eq!(ctx_segment(Some(250_000), 200_000), " · ctx 100%");
+        assert_eq!(ctx_segment(Some(250_000), 200_000), format!(" · ctx {}", paint_pct(100.0)));
         // unknown fill -> empty segment (omitted entirely)
         assert_eq!(ctx_segment(None, 200_000), "");
         // guard against zero denominator
         assert_eq!(ctx_segment(Some(10), 0), "");
+    }
+
+    #[test]
+    fn paint_pct_colors_by_danger() {
+        assert_eq!(paint_pct(4.0), "\x1b[38;5;114m4%\x1b[0m");    // <50 綠
+        assert_eq!(paint_pct(50.0), "\x1b[38;5;221m50%\x1b[0m");  // 50-79 黃
+        assert_eq!(paint_pct(79.4), "\x1b[38;5;221m79%\x1b[0m");
+        assert_eq!(paint_pct(80.0), "\x1b[38;5;203m80%\x1b[0m");  // >=80 紅
+        assert_eq!(paint_pct(17.6), "\x1b[38;5;114m18%\x1b[0m");  // {:.0} 四捨五入
+    }
+
+    #[test]
+    fn model_segment_renders_each_limit() {
+        use crate::quota::ModelLimit;
+        let limits = vec![ModelLimit { label: "Fable".into(), percent: 17.0, resets_at: None }];
+        assert_eq!(model_segment(&limits), format!(" · Fable {}", paint_pct(17.0)));
+        assert_eq!(model_segment(&[]), "");
+        let two = vec![
+            ModelLimit { label: "A".into(), percent: 1.0, resets_at: None },
+            ModelLimit { label: "B".into(), percent: 2.0, resets_at: None },
+        ];
+        assert_eq!(
+            model_segment(&two),
+            format!(" · A {} · B {}", paint_pct(1.0), paint_pct(2.0))
+        );
     }
 
     #[test]
