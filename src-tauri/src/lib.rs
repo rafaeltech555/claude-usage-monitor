@@ -90,6 +90,8 @@ pub fn run() {
             set_free_position,
             set_autostart,
             set_statusline_optin,
+            set_show_widget,
+            statusline_status,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::Moved(_) = event {
@@ -120,19 +122,39 @@ pub fn run() {
                 let _ = if want_autostart { al.enable() } else { al.disable() };
             }
 
-            // Self-heal the statusLine registration for opted-in users: older
-            // builds wrote an unquoted command (broken on the macOS app path with
-            // spaces), and the exe path can change between installs. Re-register
-            // so the command in ~/.claude/settings.json is always current.
-            if app.state::<AppState>().config.lock().unwrap().statusline_optin {
-                if let Err(e) = statusline::enable() {
-                    eprintln!("[statusline] re-register on startup failed: {e}");
+            // Statusline registration: opted-in users get self-healed every
+            // start (exe path may change between installs). The first launch
+            // ever also auto-attempts once (default-on since M5); the one-shot
+            // flag makes sure a user who later turns it off stays off.
+            {
+                let (optin, done) = {
+                    let state = app.state::<AppState>();
+                    let c = state.config.lock().unwrap();
+                    (c.statusline_optin, c.statusline_auto_enable_done)
+                };
+                if optin {
+                    if let Err(e) = statusline::enable() {
+                        eprintln!("[statusline] register on startup failed: {e}");
+                    }
+                }
+                if !done {
+                    let state = app.state::<AppState>();
+                    let mut c = state.config.lock().unwrap();
+                    c.statusline_auto_enable_done = true;
+                    let _ = c.save();
                 }
             }
 
-            // Size, position, and show the window (it starts hidden so the
-            // pre-map set_decorations above takes effect on strict WMs).
-            apply_mode(app.handle(), &mode);
+            // Size, position, and (when the widget display is on) show the
+            // window (it starts hidden so the pre-map set_decorations above
+            // takes effect on strict WMs). With show_widget off the window
+            // stays hidden; the tray is the re-entry point.
+            let show_widget = {
+                let state = app.state::<AppState>();
+                let s = state.config.lock().unwrap().show_widget;
+                s
+            };
+            apply_mode_visibility(app.handle(), &mode, show_widget);
 
             spawn_poller(app.handle().clone());
             spawn_activity_ticker(app.handle().clone());
@@ -175,6 +197,10 @@ fn save_config(state: State<AppState>, cfg: Config) -> Result<(), String> {
     next.free_position = c.free_position;
     next.free_x = c.free_x;
     next.free_y = c.free_y;
+    // Backend-owned toggles: written by tray/✕/dedicated commands — a stale
+    // frontend config object must not clobber them.
+    next.show_widget = c.show_widget;
+    next.statusline_auto_enable_done = c.statusline_auto_enable_done;
     *c = next;
     c.save()
 }
@@ -284,6 +310,31 @@ fn hide_window(app: AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
+    set_show_widget_pref(&app, false);
+}
+
+/// Settings-UI toggle for the desktop widget display. Enabling re-applies the
+/// current mode (size + place + show); disabling hides to tray.
+#[tauri::command]
+fn set_show_widget(state: State<AppState>, app: AppHandle, enabled: bool) {
+    let mode = {
+        let mut c = state.config.lock().unwrap();
+        c.show_widget = enabled;
+        let _ = c.save();
+        c.mode.clone()
+    };
+    if enabled {
+        apply_mode(&app, &mode);
+    } else if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+}
+
+/// Claude Code statusLine registration state for the settings UI:
+/// "ours" | "foreign" | "none".
+#[tauri::command]
+fn statusline_status() -> String {
+    statusline::status()
 }
 
 #[tauri::command]
@@ -765,6 +816,10 @@ fn apply_mode_persist(app: &AppHandle, mode: &str) {
 }
 
 fn apply_mode(app: &AppHandle, mode: &str) {
+    apply_mode_visibility(app, mode, true);
+}
+
+fn apply_mode_visibility(app: &AppHandle, mode: &str, show: bool) {
     let Some(win) = app.get_webview_window("main") else { return };
     let (w, h) = match mode {
         "detailed" => DETAILED,
@@ -780,7 +835,9 @@ fn apply_mode(app: &AppHandle, mode: &str) {
     let _ = win.set_always_on_top(true);
     let _ = win.set_size(tauri::LogicalSize::new(w, h));
     place_window(app, &win, w, h);
-    let _ = win.show();
+    if show {
+        let _ = win.show();
+    }
 }
 
 /// The monitor to place on: the remembered one (by name) when present, else the
@@ -915,12 +972,25 @@ fn linux_undecorate(win: &WebviewWindow) {
 
 fn toggle_visibility(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        if w.is_visible().unwrap_or(false) {
+        let was_visible = w.is_visible().unwrap_or(false);
+        if was_visible {
             let _ = w.hide();
         } else {
             let _ = w.show();
             let _ = w.set_focus();
         }
+        set_show_widget_pref(app, !was_visible);
+    }
+}
+
+/// Persist the widget-display habit (the "which displays do I keep open"
+/// memory) — every hide/show path funnels through here.
+fn set_show_widget_pref(app: &AppHandle, show: bool) {
+    let state = app.state::<AppState>();
+    let mut c = state.config.lock().unwrap();
+    if c.show_widget != show {
+        c.show_widget = show;
+        let _ = c.save();
     }
 }
 
