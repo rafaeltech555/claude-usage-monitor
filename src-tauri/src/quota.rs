@@ -57,14 +57,16 @@ pub(crate) fn normalize_reset(v: &serde_json::Value) -> Option<String> {
     chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.to_rfc3339())
 }
 
-/// Pure: pick the active model-scoped weekly limits out of raw `limits[]`.
+/// Pure: pick the model-scoped weekly limits out of raw `limits[]`.
 /// Tolerant by construction: anything malformed is skipped, never an error.
 /// Capped at 2 entries to keep the statusline a single short row.
+/// `is_active` is deliberately ignored — the API flips it within a day while
+/// the percent stays meaningful, and hiding the segment on `false` made the
+/// budget "blink" (user ruling 2026-08-09).
 pub fn model_limits_from(limits: &[serde_json::Value]) -> Vec<ModelLimit> {
     limits
         .iter()
         .filter(|v| v.get("kind").and_then(|k| k.as_str()) == Some("weekly_scoped"))
-        .filter(|v| v.get("is_active").and_then(|a| a.as_bool()).unwrap_or(true))
         .filter_map(|v| {
             let label = v
                 .pointer("/scope/model/display_name")?
@@ -312,9 +314,6 @@ mod tests {
         };
         let limits = vec![
             mk("A", 1), mk("B", 2), mk("C", 3),                       // cap 2
-            serde_json::json!({"kind":"weekly_scoped","percent":9,
-                "is_active":false,
-                "scope":{"model":{"display_name":"Off"}}}),           // inactive 濾掉
             serde_json::json!({"kind":"weekly_scoped","percent":9}),  // 無 display_name 濾掉
             serde_json::json!("garbage"),                             // 非物件不炸
         ];
@@ -324,6 +323,19 @@ mod tests {
         // epoch 已轉 RFC3339（不再是原始 epoch 數字字串）
         assert!(!m[0].resets_at.as_deref().unwrap().starts_with("1754899200"));
         assert!(m[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn model_limits_shown_regardless_of_is_active() {
+        // is_active 會在一天內自行翻轉、percent 卻持續有意義，故不據以過濾
+        // （使用者裁定 2026-08-09：有資料就顯示）
+        let limits = vec![serde_json::json!({"kind":"weekly_scoped","percent":22,
+            "is_active":false,
+            "scope":{"model":{"display_name":"Fable"}}})];
+        let m = model_limits_from(&limits);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].label, "Fable");
+        assert_eq!(m[0].percent, 22.0);
     }
 
     #[test]
