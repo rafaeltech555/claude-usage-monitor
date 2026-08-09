@@ -43,6 +43,8 @@ type Config = {
   opacity: number;
   autostart: boolean;
   statusline_optin: boolean;
+  show_widget: boolean;
+  statusline_auto_enable_done: boolean;
   effects: boolean;
   alert_effects: boolean;
   show_activity: boolean;
@@ -162,7 +164,17 @@ function populateSettings() {
   (document.getElementById("s-free-pos") as HTMLInputElement).checked = cfg.free_position;
   (document.getElementById("s-corner") as HTMLSelectElement).disabled = cfg.free_position;
   (document.getElementById("s-statusline") as HTMLInputElement).checked = cfg.statusline_optin;
+  (document.getElementById("s-widget") as HTMLInputElement).checked = cfg.show_widget;
   $("s-statusline-msg").hidden = true;
+  if (cfg.statusline_optin) {
+    invoke<string>("statusline_status").then((st) => {
+      if (st === "foreign") {
+        const msg = $("s-statusline-msg");
+        msg.textContent = "⚠ statusline 未生效：偵測到其他工具的 statusLine 設定";
+        msg.hidden = false;
+      }
+    });
+  }
 }
 
 function openSettings() {
@@ -261,6 +273,11 @@ function wireSettings() {
       msg.textContent = "⚠ " + String(e);
       msg.hidden = false;
     }
+  });
+  on("s-widget", "change", async (el) => {
+    const enabled = (el as HTMLInputElement).checked;
+    await invoke("set_show_widget", { enabled });
+    cfg.show_widget = enabled;
   });
 }
 
