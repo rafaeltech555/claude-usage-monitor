@@ -118,18 +118,6 @@ pub fn ctx_segment(fill: Option<u64>, window: u64) -> String {
     }
 }
 
-/// Normalize a reset timestamp to an RFC3339 string the frontend can `new Date()`.
-/// Claude Code's statusline payload sends `resets_at` as a Unix epoch (seconds)
-/// integer, while the OAuth endpoint sends an RFC3339 string — accept both so the
-/// two sources stay interchangeable. Null/other types yield None.
-fn normalize_reset(v: &serde_json::Value) -> Option<String> {
-    if let Some(s) = v.as_str() {
-        return Some(s.to_string());
-    }
-    let secs = v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))?;
-    chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.to_rfc3339())
-}
-
 fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
     // The percentage key has varied across Claude Code versions; accept the known
     // spellings. (statusline-raw.json reveals the actual one if none of these hit.)
@@ -140,7 +128,7 @@ fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
         .iter()
         .filter_map(|k| v.get(*k))
         .find(|x| !x.is_null())
-        .and_then(normalize_reset);
+        .and_then(crate::quota::normalize_reset);
     Some(QuotaWindow {
         utilization: u,
         resets_at: r,
@@ -173,6 +161,7 @@ pub fn run_hook() {
         seven_day: win_from(&rl["seven_day"]),
         seven_day_opus: win_from(&rl["seven_day_opus"]),
         seven_day_sonnet: win_from(&rl["seven_day_sonnet"]),
+        ..Default::default()
     };
 
     if let Ok(json) = serde_json::to_string(&usage) {

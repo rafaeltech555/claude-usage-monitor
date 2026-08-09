@@ -30,6 +30,51 @@ pub struct QuotaUsage {
     pub seven_day: Option<QuotaWindow>,
     pub seven_day_opus: Option<QuotaWindow>,
     pub seven_day_sonnet: Option<QuotaWindow>,
+    /// Raw `limits[]` entries (unstable schema) — parse lazily via
+    /// [`model_limits_from`] so an upstream shape change can never poison
+    /// the whole payload.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits: Vec<serde_json::Value>,
+}
+
+/// A model-scoped weekly limit (e.g. Fable's own budget) from `limits[]`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelLimit {
+    pub label: String,
+    pub percent: f64,
+    pub resets_at: Option<String>,
+}
+
+/// Normalize a reset timestamp to RFC3339. Accepts an RFC3339 string (OAuth)
+/// or a Unix epoch-seconds number (Claude Code statusline payload).
+pub(crate) fn normalize_reset(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    let secs = v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))?;
+    chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.to_rfc3339())
+}
+
+/// Pure: pick the active model-scoped weekly limits out of raw `limits[]`.
+/// Tolerant by construction: anything malformed is skipped, never an error.
+/// Capped at 2 entries to keep the statusline a single short row.
+pub fn model_limits_from(limits: &[serde_json::Value]) -> Vec<ModelLimit> {
+    limits
+        .iter()
+        .filter(|v| v.get("kind").and_then(|k| k.as_str()) == Some("weekly_scoped"))
+        .filter(|v| v.get("is_active").and_then(|a| a.as_bool()).unwrap_or(true))
+        .filter_map(|v| {
+            let label = v
+                .pointer("/scope/model/display_name")?
+                .as_str()
+                .filter(|s| !s.is_empty())?
+                .to_string();
+            let percent = v.get("percent").and_then(|p| p.as_f64())?;
+            let resets_at = v.get("resets_at").and_then(normalize_reset);
+            Some(ModelLimit { label, percent, resets_at })
+        })
+        .take(2)
+        .collect()
 }
 
 /// Abstraction so the data source can be swapped (oauth / statusline / approx).
@@ -179,5 +224,62 @@ mod tests {
         let u: QuotaUsage = serde_json::from_str("{}").unwrap();
         assert!(u.five_hour.is_none());
         assert!(u.seven_day.is_none());
+    }
+
+    #[test]
+    fn model_limits_from_extracts_weekly_scoped() {
+        let limits = vec![
+            serde_json::json!({"kind":"session","percent":4,"is_active":true,
+                "scope":null}),
+            serde_json::json!({"kind":"weekly_scoped","percent":17,"is_active":true,
+                "resets_at":"2026-08-11T09:00:00+00:00",
+                "scope":{"model":{"id":null,"display_name":"Fable"}}}),
+            serde_json::json!({"kind":"weekly_all","percent":10,"is_active":true}),
+        ];
+        let m = model_limits_from(&limits);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].label, "Fable");
+        assert_eq!(m[0].percent, 17.0);
+        assert_eq!(m[0].resets_at.as_deref(), Some("2026-08-11T09:00:00+00:00"));
+    }
+
+    #[test]
+    fn model_limits_from_tolerates_junk_and_caps_at_two() {
+        // epoch resets_at、is_active 缺省視為 true、percent 為 int 都要收
+        let mk = |name: &str, pct: i64| {
+            serde_json::json!({"kind":"weekly_scoped","percent":pct,
+                "resets_at":1754899200,
+                "scope":{"model":{"display_name":name}}})
+        };
+        let limits = vec![
+            mk("A", 1), mk("B", 2), mk("C", 3),                       // cap 2
+            serde_json::json!({"kind":"weekly_scoped","percent":9,
+                "is_active":false,
+                "scope":{"model":{"display_name":"Off"}}}),           // inactive 濾掉
+            serde_json::json!({"kind":"weekly_scoped","percent":9}),  // 無 display_name 濾掉
+            serde_json::json!("garbage"),                             // 非物件不炸
+        ];
+        let m = model_limits_from(&limits);
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].label, "A");
+        // epoch 已轉 RFC3339（不再是原始 epoch 數字字串）
+        assert!(!m[0].resets_at.as_deref().unwrap().starts_with("1754899200"));
+        assert!(m[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn quota_usage_parses_limits_field() {
+        let json = r#"{"five_hour":{"utilization":4.0,"resets_at":null},
+            "limits":[{"kind":"weekly_scoped","percent":17,"is_active":true,
+                "scope":{"model":{"display_name":"Fable"}}}]}"#;
+        let u: QuotaUsage = serde_json::from_str(json).unwrap();
+        assert_eq!(model_limits_from(&u.limits).len(), 1);
+        // 缺 limits 欄位 → 空 vec，不炸
+        let u2: QuotaUsage = serde_json::from_str("{}").unwrap();
+        assert!(u2.limits.is_empty());
+        // roundtrip：serialize 後 limits 原樣保留（cache 檔要用）
+        let s = serde_json::to_string(&u).unwrap();
+        let back: QuotaUsage = serde_json::from_str(&s).unwrap();
+        assert_eq!(model_limits_from(&back.limits).len(), 1);
     }
 }
