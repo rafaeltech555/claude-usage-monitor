@@ -9,7 +9,9 @@
 //! to the official host, and is never written to disk or logs.
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::Duration;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
@@ -85,11 +87,12 @@ pub trait QuotaProvider {
 
 pub struct OAuthProvider;
 
-impl QuotaProvider for OAuthProvider {
-    async fn fetch(&self) -> Result<QuotaUsage, String> {
+impl OAuthProvider {
+    pub async fn fetch_timeout(&self, timeout: Duration) -> Result<QuotaUsage, String> {
         let token = read_token()?;
         let ua = format!("claude-code/{}", claude_version());
         let client = reqwest::Client::builder()
+            .timeout(timeout)
             .build()
             .map_err(|e| e.to_string())?;
         let resp = client
@@ -116,6 +119,62 @@ impl QuotaProvider for OAuthProvider {
             .await
             .map_err(|e| format!("parse failed: {e}"))
     }
+}
+
+impl QuotaProvider for OAuthProvider {
+    async fn fetch(&self) -> Result<QuotaUsage, String> {
+        self.fetch_timeout(Duration::from_secs(10)).await
+    }
+}
+
+/// Path to the quota cache file the statusline hook can read without a network call.
+pub fn cache_path() -> PathBuf {
+    crate::config::Config::dir().join("quota-cache.json")
+}
+
+fn set_owner_only(p: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = p;
+}
+
+/// Persist the latest OAuth quota (percentages + raw limits; never the token)
+/// so the statusline hook can show model-scoped budgets without a network call.
+pub fn write_cache(u: &QuotaUsage) {
+    write_cache_at(&cache_path(), u);
+}
+
+pub(crate) fn write_cache_at(p: &Path, u: &QuotaUsage) {
+    let Ok(json) = serde_json::to_string(u) else { return };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if std::fs::write(p, json).is_ok() {
+        set_owner_only(p);
+    }
+}
+
+/// Read the cache if written within `max_age_secs` (freshness = file mtime).
+/// `max_age_secs == 0` always misses (there is no meaningful "fresh enough"
+/// window of zero, and it lets tests assert a hard-expired cache deterministically).
+pub fn read_cache_fresh(max_age_secs: u64) -> Option<QuotaUsage> {
+    read_cache_fresh_at(&cache_path(), max_age_secs)
+}
+
+pub(crate) fn read_cache_fresh_at(p: &Path, max_age_secs: u64) -> Option<QuotaUsage> {
+    if max_age_secs == 0 {
+        return None;
+    }
+    let modified = std::fs::metadata(p).ok()?.modified().ok()?;
+    let age = std::time::SystemTime::now().duration_since(modified).ok()?;
+    if age.as_secs() > max_age_secs {
+        return None;
+    }
+    serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
 }
 
 /// Extract the OAuth access token from a credentials JSON blob (the same shape
@@ -265,6 +324,30 @@ mod tests {
         // epoch 已轉 RFC3339（不再是原始 epoch 數字字串）
         assert!(!m[0].resets_at.as_deref().unwrap().starts_with("1754899200"));
         assert!(m[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn cache_roundtrip_and_freshness() {
+        let dir = std::env::temp_dir().join(format!("cum-qcache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("quota-cache.json");
+
+        let u = QuotaUsage {
+            five_hour: Some(QuotaWindow { utilization: 4.0, resets_at: None }),
+            limits: vec![serde_json::json!({"kind":"weekly_scoped","percent":17,
+                "scope":{"model":{"display_name":"Fable"}}})],
+            ..Default::default()
+        };
+        write_cache_at(&p, &u);
+        let back = read_cache_fresh_at(&p, 600).expect("fresh cache should read back");
+        assert_eq!(model_limits_from(&back.limits).len(), 1);
+
+        // 0 秒容忍 = 一定過期
+        assert!(read_cache_fresh_at(&p, 0).is_none());
+        // 不存在 → None
+        assert!(read_cache_fresh_at(&dir.join("nope.json"), 600).is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
