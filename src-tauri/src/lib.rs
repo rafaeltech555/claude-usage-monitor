@@ -484,7 +484,13 @@ async fn poll_once(app: &AppHandle, provider: &OAuthProvider) -> PollResult {
     // recently rendered), use it and skip the network call; else hit OAuth.
     let quota_result = match optin.then(|| statusline::read_fresh(150)).flatten() {
         Some(q) => Ok(q),
-        None => provider.fetch().await,
+        None => {
+            let r = provider.fetch().await;
+            if let Ok(q) = &r {
+                quota::write_cache(q);
+            }
+            r
+        }
     };
 
     let snap = match quota_result {

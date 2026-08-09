@@ -157,6 +157,52 @@ fn win_from(v: &serde_json::Value) -> Option<QuotaWindow> {
     })
 }
 
+const CACHE_FRESH_SECS: u64 = 600;
+const FETCH_RETRY_SECS: u64 = 120;
+
+/// Model-scoped limits for the hook: cache first; on a stale/missing cache do a
+/// rate-limited (attempt-marker) self-fetch with a hard 2s timeout so the
+/// statusline never hangs. Any failure degrades to "no segment".
+fn model_limits_for_hook() -> Vec<crate::quota::ModelLimit> {
+    use crate::quota;
+    if let Some(u) = quota::read_cache_fresh(CACHE_FRESH_SECS) {
+        return quota::model_limits_from(&u.limits);
+    }
+    let marker = Config::dir().join("quota-fetch-attempt");
+    let recently_tried = std::fs::metadata(&marker)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|m| std::time::SystemTime::now().duration_since(m).ok())
+        .is_some_and(|age| age.as_secs() < FETCH_RETRY_SECS);
+    if recently_tried {
+        return Vec::new();
+    }
+    if let Some(dir) = marker.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&marker, b"");
+
+    let fetched = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()
+        .and_then(|rt| {
+            rt.block_on(async {
+                quota::OAuthProvider
+                    .fetch_timeout(std::time::Duration::from_secs(2))
+                    .await
+                    .ok()
+            })
+        });
+    match fetched {
+        Some(u) => {
+            quota::write_cache(&u);
+            quota::model_limits_from(&u.limits)
+        }
+        None => Vec::new(),
+    }
+}
+
 /// Invoked as `<exe> --statusline`: read stdin, persist quota, echo a line.
 pub fn run_hook() {
     let mut input = String::new();
@@ -221,10 +267,12 @@ pub fn run_hook() {
         v.get("model").and_then(|m| m.get("id")).and_then(|x| x.as_str()).unwrap_or(""),
         v.get("exceeds_200k_tokens").and_then(|x| x.as_bool()).unwrap_or(false),
     );
+    let model_seg = model_segment(&model_limits_for_hook());
     print!(
-        "⚡ {} · 7d {}{}",
+        "⚡ {} · 7d {}{}{}",
         fmt(&usage.five_hour),
         fmt(&usage.seven_day),
+        model_seg,
         ctx_segment(ctx, window)
     );
 }
