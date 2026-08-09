@@ -13,6 +13,7 @@ repo 內完全查無任何里程碑/roadmap 文件，以下純依 git commit 與
 - **M2**（done）：frozen-card 即時刷新＋融化動畫、statusline 顯示目前 session context 使用率 %，收斂為 v0.2.0（依 `af0dfcd`..`94b602f` = tag `v0.2.0`）
 - **M3**（進行中，近期已停滯）：發布後小型硬化——epoch resets_at 相容修正、gitleaks secret-scan CI（依 `5d74812`、`358405a`；最後一筆 07-03 起無新 commit）
 - **M4**（done 2026-08-09）：statusline 顯示 Fable 模型專屬額度＋百分比顏色渲染（spec/plan 見 docs/superpowers/）
+- **M5**（done 2026-08-09）：statusline 預設開啟＋widget/statusline 顯示習慣記憶；同日修 ctx 1M 窗誤算 bug
 
 ## Backlog
 

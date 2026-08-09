@@ -1,9 +1,12 @@
-//! Opt-in statusline source (default OFF).
+//! Statusline source (default ON since M5; user can still disable it).
 //!
-//! When enabled, we register `<this-exe> --statusline` as Claude Code's
-//! statusLine command. Claude Code pipes session JSON (including `rate_limits`
-//! for Pro/Max) to its stdin on every render; our hook extracts the quota,
-//! writes it to a 0600 file the app reads, and echoes a short status line back.
+//! On first launch we auto-register `<this-exe> --statusline` as Claude
+//! Code's statusLine command once (tracked by the one-shot
+//! `statusline_auto_enable_done` flag); it can be toggled off/on again from
+//! settings afterwards. Claude Code pipes session JSON (including
+//! `rate_limits` for Pro/Max) to its stdin on every render; our hook
+//! extracts the quota, writes it to a 0600 file the app reads, and echoes a
+//! short status line back.
 //!
 //! Enabling backs up `~/.claude/settings.json` and refuses to overwrite an
 //! existing user statusLine. The OAuth token is never involved here.

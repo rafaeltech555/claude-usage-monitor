@@ -24,7 +24,8 @@
   - **魔導霓虹**:電路網格 + 青/洋紅霓虹 + 掃描線(Orbitron + Share Tech Mono)。
 - **釘選任何角落（支援多螢幕）**：無邊框、永遠置頂,拖到四角自動吸附並記住位置;**多螢幕**下會記住你拖去的那台螢幕(該螢幕拔除時自動退回主螢幕)。設定可改「**自由位置**」,放在任何螢幕的任意位置都記住、不吸附角落。
 - **單一實例**：重複啟動(或開機自啟與手動啟動相撞)只會把既有視窗叫回前景,不會開出第二個托盤圖示。
-- **statusline 即時更新（opt-in，預設關閉）**：啟用後在 `~/.claude/settings.json` 註冊 statusLine（先備份、不覆蓋既有設定），有 Claude Code session 在跑時即時更新且免打 API。狀態列格式為 `⚡ N% · 7d N% · Fable N% · ctx N%`：`⚡` 為 5 小時額度、`7d` 為每週額度、`Fable` 為 Fable 模型專屬每週額度（資料來自 OAuth usage endpoint 的 `limits[]`，經 `~/.config/claude-usage-monitor/quota-cache.json` 快取，widget 輪詢時回寫；快取逾時則 hook 自行以 2 秒 timeout 補抓一次），`ctx` 為目前 session 的 context 使用率（以該 session transcript 的最後一筆 usage 估算，自動辨識 200k／1M context window）——三者皆讀不到時自動省略對應段落。所有百分比依危險度上色（<50 綠、50–79 黃、≥80 紅）。
+- **statusline 即時更新（預設開啟）**：首次啟動時自動在 `~/.claude/settings.json` 安全註冊一次 statusLine（先備份、絕不覆蓋既有的其他 statusLine 設定；僅嘗試一次，記在 `statusline_auto_enable_done` 旗標，之後可自行在設定頁關閉/重開）。有 Claude Code session 在跑時即時更新且免打 API。狀態列格式為 `⚡ N% · 7d N% · Fable N% · ctx N%`：`⚡` 為 5 小時額度、`7d` 為每週額度、`Fable` 為 Fable 模型專屬每週額度（資料來自 OAuth usage endpoint 的 `limits[]`，經 `~/.config/claude-usage-monitor/quota-cache.json` 快取，widget 輪詢時回寫；快取逾時則 hook 自行以 2 秒 timeout 補抓一次），`ctx` 為目前 session 的 context 使用率（直接採用 Claude Code payload 回報的 `context_window` 物件計算，正確辨識 200k／1M 原生窗模型，不再用固定 200k 誤算 1M 窗模型的使用率）——三者皆讀不到時自動省略對應段落。所有百分比依危險度上色（<50 綠、50–79 黃、≥80 紅）。
+- **顯示桌面小窗（可開關，預設開）**：設定頁「顯示桌面小窗」勾選框可獨立關閉桌面 widget（與 statusline 互不影響，各自可單獨開關）；widget 的隱藏路徑（系統匣左鍵切換、詳細卡 ✕、設定頁勾選框）統一寫回同一個顯示習慣，下次啟動沿用你最後一次的選擇。
 
 ## 下載 / Releases
 
@@ -66,7 +67,7 @@ npm test                                           # 前端 vitest：格式化 +
 
 ## 設定檔
 
-`~/.config/claude-usage-monitor/config.json`：模式、角落、更新間隔(≥180s)、警示/危險門檻、帳單日、透明度、開機啟動、火焰特效(`effects`)、警示特效(`alert_effects`)、顯示即時活動(`show_activity`)、渲染風格(`theme`:classic/arcane/wizard/neon)、多螢幕位置記憶(`monitor`/`free_position`)、statusline opt-in。
+`~/.config/claude-usage-monitor/config.json`：模式、角落、更新間隔(≥180s)、警示/危險門檻、帳單日、透明度、開機啟動、火焰特效(`effects`)、警示特效(`alert_effects`)、顯示即時活動(`show_activity`)、渲染風格(`theme`:classic/arcane/wizard/neon)、多螢幕位置記憶(`monitor`/`free_position`)、statusline 開關（`statusline`，預設開，`statusline_auto_enable_done` 記錄是否已自動註冊過）、顯示桌面小窗（`show_widget`，預設開）。
 
 ## 桌面環境備註
 
