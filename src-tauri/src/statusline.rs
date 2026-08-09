@@ -401,6 +401,30 @@ fn disable_at(path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Registration state of Claude Code's statusLine: "ours" | "foreign" | "none".
+/// Unreadable/corrupt settings count as "foreign" (be conservative: never claim
+/// or touch what we can't positively identify as ours).
+pub fn status() -> String {
+    settings_path().map(|p| status_at(&p)).unwrap_or_else(|| "none".into())
+}
+
+fn status_at(path: &std::path::Path) -> String {
+    if !path.exists() {
+        return "none".into();
+    }
+    let Ok(s) = std::fs::read_to_string(path) else {
+        return "foreign".into();
+    };
+    let Ok(obj) = serde_json::from_str::<serde_json::Value>(&s) else {
+        return "foreign".into();
+    };
+    match obj.get("statusLine") {
+        None => "none".into(),
+        Some(sl) if is_ours(sl) => "ours".into(),
+        Some(_) => "foreign".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,6 +507,34 @@ mod tests {
         std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
         assert!(enable_at(&path).is_err());
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn status_at_reports_ours_foreign_none() {
+        let dir = std::env::temp_dir().join(format!("cum-status-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        // 檔案不存在 → none
+        assert_eq!(status_at(&path), "none");
+        // 沒有 statusLine 鍵 → none
+        std::fs::write(&path, r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(status_at(&path), "none");
+        // 他人的 statusLine → foreign
+        std::fs::write(&path, r#"{"statusLine":{"command":"other --bar"}}"#).unwrap();
+        assert_eq!(status_at(&path), "foreign");
+        // 我們的 → ours
+        std::fs::write(
+            &path,
+            format!(r#"{{"statusLine":{{"command":{}}}}}"#, serde_json::json!(our_command())),
+        )
+        .unwrap();
+        assert_eq!(status_at(&path), "ours");
+        // 壞 JSON → foreign（保守：不明狀態不宣稱是我們的，也不覆蓋）
+        std::fs::write(&path, "not json").unwrap();
+        assert_eq!(status_at(&path), "foreign");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
